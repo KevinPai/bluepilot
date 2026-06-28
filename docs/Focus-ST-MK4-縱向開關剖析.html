@@ -1,0 +1,489 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Focus-ST-MK4-縱向開關剖析</title>
+<style>
+:root{--bg:#fff;--fg:#1f2328;--muted:#59636e;--border:#d1d9e0;--code-bg:#f6f8fa;--accent:#0969da;--stripe:#f6f8fa}
+@media(prefers-color-scheme:dark){:root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--border:#30363d;--code-bg:#161b22;--accent:#4493f8;--stripe:#161b22}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helvetica,Arial,sans-serif;font-size:16px;line-height:1.6;display:flex;align-items:flex-start}
+.toc{flex:0 0 264px;width:264px;position:sticky;top:0;max-height:100vh;overflow:auto;padding:24px 12px 40px;border-right:1px solid var(--border);font-size:13.5px;line-height:1.5}
+.toc a{display:block;padding:3px 10px;margin:1px 0;color:var(--muted);text-decoration:none;border-left:2px solid transparent;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.toc a:hover{color:var(--fg);background:var(--code-bg)}
+.toc .l1{font-weight:600}.toc .l2{padding-left:22px}.toc .l3{padding-left:34px;font-size:13px}
+.markdown-body{flex:1;min-width:0;max-width:860px;margin:0 auto;padding:32px 40px 80px;word-wrap:break-word}
+.markdown-body h1,.markdown-body h2{border-bottom:1px solid var(--border);padding-bottom:.3em}
+.markdown-body h1,.markdown-body h2,.markdown-body h3,.markdown-body h4{margin-top:1.4em;margin-bottom:.6em;font-weight:600;line-height:1.25}
+.markdown-body a{color:var(--accent);text-decoration:none}.markdown-body a:hover{text-decoration:underline}
+.markdown-body code{background:var(--code-bg);padding:.2em .4em;border-radius:6px;font-size:85%;font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
+.markdown-body pre{background:var(--code-bg);padding:16px;border-radius:8px;overflow:auto;line-height:1.45}
+.markdown-body pre code{background:transparent;padding:0;font-size:90%}
+.markdown-body blockquote{margin:0;padding:0 1em;color:var(--muted);border-left:4px solid var(--border)}
+.markdown-body table{border-collapse:collapse;display:block;width:max-content;max-width:100%;overflow:auto;margin:1em 0}
+.markdown-body th,.markdown-body td{border:1px solid var(--border);padding:6px 13px}
+.markdown-body tr:nth-child(2n){background:var(--stripe)}
+.markdown-body img{max-width:100%}
+.markdown-body hr{border:none;border-top:1px solid var(--border);margin:1.6em 0}
+.markdown-body .task-list-item{list-style:none}
+.markdown-body .task-list-item input{margin:0 .4em .25em -1.4em}
+.markdown-body pre.mermaid{background:transparent;text-align:center;padding:8px 0}
+</style>
+<style>pre code.hljs{display:block;overflow-x:auto;padding:1em}code.hljs{padding:3px 5px}/*!
+  Theme: GitHub Dark
+  Description: Dark theme as seen on github.com
+  Author: github.com
+  Maintainer: @Hirse
+  Updated: 2021-05-15
+
+  Outdated base version: https://github.com/primer/github-syntax-dark
+  Current colors taken from GitHub's CSS
+*/.hljs{color:#c9d1d9;background:#0d1117}.hljs-doctag,.hljs-keyword,.hljs-meta .hljs-keyword,.hljs-template-tag,.hljs-template-variable,.hljs-type,.hljs-variable.language_{color:#ff7b72}.hljs-title,.hljs-title.class_,.hljs-title.class_.inherited__,.hljs-title.function_{color:#d2a8ff}.hljs-attr,.hljs-attribute,.hljs-literal,.hljs-meta,.hljs-number,.hljs-operator,.hljs-variable,.hljs-selector-attr,.hljs-selector-class,.hljs-selector-id{color:#79c0ff}.hljs-regexp,.hljs-string,.hljs-meta .hljs-string{color:#a5d6ff}.hljs-built_in,.hljs-symbol{color:#ffa657}.hljs-comment,.hljs-code,.hljs-formula{color:#8b949e}.hljs-name,.hljs-quote,.hljs-selector-tag,.hljs-selector-pseudo{color:#7ee787}.hljs-subst{color:#c9d1d9}.hljs-section{color:#1f6feb;font-weight:700}.hljs-bullet{color:#f2cc60}.hljs-emphasis{color:#c9d1d9;font-style:italic}.hljs-strong{color:#c9d1d9;font-weight:700}.hljs-addition{color:#aff5b4;background-color:#033a16}.hljs-deletion{color:#ffdcd7;background-color:#67060c}</style>
+</head>
+<body>
+<nav class="toc">
+<a class="l1" href="#h-0">Ford Focus ST MK4：BluePilot 縱向控制三開關組合深度剖析</a>
+<a class="l2" href="#h-1">摘要（TL;DR）</a>
+<a class="l2" href="#h-2">目錄</a>
+<a class="l2" href="#h-3">1. 三顆開關的真實定義與層級</a>
+<a class="l2" href="#h-4">2. 三個必須糾正的核心觀念</a>
+<a class="l3" href="#h-5">糾正 #1：「Bypass BP Long」≠ 把縱向交回福特原廠</a>
+<a class="l3" href="#h-6">糾正 #2：「Bypass BP Long + OP Long」不矛盾、不會跳 ACC 故障</a>
+<a class="l3" href="#h-7">糾正 #3：「只開 Experimental、不開 OP Long」對縱向完全無效，且實務上設不起來</a>
+<a class="l2" href="#h-8">3. 變速箱：凌駕三顆開關的決定性因素</a>
+<a class="l2" href="#h-9">4. 共通底層機制</a>
+<a class="l3" href="#h-10">4.1 OP Long=ON 時，gas/brake 如何產生</a>
+<a class="l3" href="#h-11">4.2 「停等後誰起步」的真實機制（OP Long=ON）</a>
+<a class="l3" href="#h-12">4.3 靜止保壓不是原廠 EPB 自己鎖死</a>
+<a class="l3" href="#h-13">4.4 ICBM 沒有 RESUME</a>
+<a class="l3" href="#h-14">4.5 Experimental Mode（E2E）做什麼</a>
+<a class="l2" href="#h-15">5. 六種組合逐一剖析</a>
+<a class="l3" href="#h-16">組合 1｜只開 Bypass BP Long（OP Long 關、實驗關）</a>
+<a class="l3" href="#h-17">組合 2｜只開 OP Long（Chill，Bypass 關、實驗關）</a>
+<a class="l3" href="#h-18">組合 3｜OP Long + Experimental（完全體 E2E，Bypass 關）</a>
+<a class="l3" href="#h-19">組合 4｜Bypass BP Long + OP Long（你以為的「邏輯矛盾」）</a>
+<a class="l3" href="#h-20">組合 5｜只開 Experimental（Bypass 關、OP Long 關）</a>
+<a class="l3" href="#h-21">組合 6｜Bypass BP Long + Experimental（OP Long 關或開）</a>
+<a class="l2" href="#h-22">6. 跨組合比較表</a>
+<a class="l2" href="#h-23">7. 給 Focus ST MK4 車主的建議</a>
+<a class="l2" href="#h-24">8. 重要提醒與免責</a>
+<a class="l2" href="#h-25">附錄 A：程式碼證據索引</a>
+<a class="l3" href="#h-26">開關定義與 gating</a>
+<a class="l3" href="#h-27">Ford 縱向核心</a>
+<a class="l3" href="#h-28">Stop-and-go / standstill / resume</a>
+<a class="l3" href="#h-29">Experimental / E2E 規劃</a>
+<a class="l3" href="#h-30">Focus 平台</a>
+<a class="l2" href="#h-31">附錄 B：無法由程式碼確認的事項</a>
+</nav>
+<article class="markdown-body">
+<h1 id="h-0">Ford Focus ST MK4：BluePilot 縱向控制三開關組合深度剖析</h1>
+<blockquote>
+<p><strong>分析對象</strong>：2020 Ford Focus ST MK4（C519 平台，platform = <code>FORD_FOCUS_MK4</code>）
+<strong>三顆開關</strong>：Bypass BP Longitudinal Control、OP Long、Experimental Mode
+<strong>程式碼基準</strong>：BluePilot 分支 <code>bp-6.0</code>（sunnypilot / openpilot 衍生）
+<strong>分析方法</strong>：原始碼靜態分析（多 agent 讀碼 + 一致性審查 + 人工驗證）
+<strong>撰寫日期</strong>：2026-06-27</p>
+</blockquote>
+<hr>
+<h2 id="h-1">摘要（TL;DR）</h2>
+<ol>
+<li><strong>「Bypass BP Long」不是把縱向交回福特原廠。</strong> 交回原廠的唯一開關是 <strong>OP Long</strong>。<code>disable_BP_long_UI</code> 的所有程式碼都巢狀在 <code>if self.CP.openpilotLongitudinalControl</code>（<code>carcontroller.py:721</code>）之內，OP Long 一關它就是 <strong>no-op</strong>。</li>
+<li><strong>「Bypass BP Long」實質只是高速巡航微調開關</strong>：只在 &gt;50 mph 速度死區、未踩油煞、且（無前車或前車 &gt;40 mph）時才生效；<strong>塞車低速 stop-and-go 時開或關完全沒差別</strong>。</li>
+<li><strong>三顆開關不互斥、不會跳 ACC 故障。</strong> 它們位於縱向管線的不同層級（總開關 / 規劃層 / 致動層），只受 OP Long 一個總開關 gating。</li>
+<li><strong>「只開 Experimental」設不起來</strong>：OP Long=OFF 時該開關在 UI 會被灰掉並從 Params 移除。</li>
+<li><strong>變速箱才是 stop-and-go 的生死線</strong>：手排 Focus ST → <code>minEnableSpeed≈32 km/h</code>、<code>autoResumeSng=False</code> → 走停不可行；只有自排才談得上完整 stop-and-go。</li>
+<li><strong>openpilot 路徑沒有「3 秒」</strong>：「停等 3 秒需手動」是福特原廠 ACC（OP Long=OFF）的概念；openpilot（OP Long=ON）是「前車一走、<code>shouldStop</code> 一清除就起步」。</li>
+</ol>
+<hr>
+<h2 id="h-2">目錄</h2>
+<ol>
+<li><a href="#1-%E4%B8%89%E9%A1%86%E9%96%8B%E9%97%9C%E7%9A%84%E7%9C%9F%E5%AF%A6%E5%AE%9A%E7%BE%A9%E8%88%87%E5%B1%A4%E7%B4%9A">三顆開關的真實定義與層級</a></li>
+<li><a href="#2-%E4%B8%89%E5%80%8B%E5%BF%85%E9%A0%88%E7%B3%BE%E6%AD%A3%E7%9A%84%E6%A0%B8%E5%BF%83%E8%A7%80%E5%BF%B5">三個必須糾正的核心觀念</a></li>
+<li><a href="#3-%E8%AE%8A%E9%80%9F%E7%AE%B1%E5%87%8C%E9%A7%95%E4%B8%89%E9%A1%86%E9%96%8B%E9%97%9C%E7%9A%84%E6%B1%BA%E5%AE%9A%E6%80%A7%E5%9B%A0%E7%B4%A0">變速箱：凌駕三顆開關的決定性因素</a></li>
+<li><a href="#4-%E5%85%B1%E9%80%9A%E5%BA%95%E5%B1%A4%E6%A9%9F%E5%88%B6">共通底層機制</a></li>
+<li><a href="#5-%E5%85%AD%E7%A8%AE%E7%B5%84%E5%90%88%E9%80%90%E4%B8%80%E5%89%96%E6%9E%90">六種組合逐一剖析</a></li>
+<li><a href="#6-%E8%B7%A8%E7%B5%84%E5%90%88%E6%AF%94%E8%BC%83%E8%A1%A8">跨組合比較表</a></li>
+<li><a href="#7-%E7%B5%A6-focus-st-mk4-%E8%BB%8A%E4%B8%BB%E7%9A%84%E5%BB%BA%E8%AD%B0">給 Focus ST MK4 車主的建議</a></li>
+<li><a href="#8-%E9%87%8D%E8%A6%81%E6%8F%90%E9%86%92%E8%88%87%E5%85%8D%E8%B2%AC">重要提醒與免責</a></li>
+<li><a href="#%E9%99%84%E9%8C%84-a%E7%A8%8B%E5%BC%8F%E7%A2%BC%E8%AD%89%E6%93%9A%E7%B4%A2%E5%BC%95">附錄 A：程式碼證據索引</a></li>
+<li><a href="#%E9%99%84%E9%8C%84-b%E7%84%A1%E6%B3%95%E7%94%B1%E7%A8%8B%E5%BC%8F%E7%A2%BC%E7%A2%BA%E8%AA%8D%E7%9A%84%E4%BA%8B%E9%A0%85">附錄 B：無法由程式碼確認的事項</a></li>
+</ol>
+<hr>
+<h2 id="h-3">1. 三顆開關的真實定義與層級</h2>
+<table>
+<thead>
+<tr>
+<th>俗稱</th>
+<th>UI 名稱</th>
+<th>Param</th>
+<th>定義位置</th>
+<th>作用層級</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Bypass BP Long</td>
+<td>Bypass BP Longitudinal Control</td>
+<td><code>disable_BP_long_UI</code></td>
+<td><code>selfdrive/ui/bp/layouts/settings/bluepilot.py:364-371</code></td>
+<td><strong>致動層</strong>（Ford carcontroller 內部子開關）</td>
+</tr>
+<tr>
+<td>OP Long</td>
+<td>sunnypilot Longitudinal Control (Alpha)</td>
+<td><code>AlphaLongitudinalEnabled</code></td>
+<td><code>selfdrive/ui/layouts/settings/developer.py:74-80</code></td>
+<td><strong>總開關</strong>（決定縱向歸 openpilot 還是原廠）</td>
+</tr>
+<tr>
+<td>Experimental Mode</td>
+<td>Experimental Mode</td>
+<td><code>ExperimentalMode</code></td>
+<td><code>selfdrive/ui/layouts/settings/toggles.py:55-60</code></td>
+<td><strong>規劃層</strong>（是否併入 E2E 神經網路輸出）</td>
+</tr>
+</tbody>
+</table>
+<p>層級關係：</p>
+<pre class="hljs"><code>OP Long (AlphaLongitudinalEnabled)
+  │  card.py:100/112 → Ford interface.py:75-77
+  │  → ret.openpilotLongitudinalControl = True
+  │
+  └─ openpilotLongitudinalControl == True 時，以下才有意義：
+       ├─ Experimental Mode  → 規劃層：longitudinal_planner.py:163-167 是否採用 E2E
+       └─ Bypass BP Long     → 致動層：carcontroller.py:780/895 是否套用 BP 高速微調
+</code></pre>
+<p>重點補充：</p>
+<ul>
+<li><strong>「OP Long」帶 <code>DEVELOPMENT_ONLY</code> 旗標</strong>（<code>params_keys.h:40</code>），release 分支會被隱藏並移除該 param（<code>developer.py:120-125</code>）——屬實驗性 alpha，非長期穩定保證。</li>
+<li><strong>「Experimental Mode」可用與否，在 Ford 上直接由 OP Long 決定</strong>：因 Ford <code>alphaLongitudinalAvailable=True</code>（<code>interface.py:70</code>），<code>ui_state.has_longitudinal_control = AlphaLongitudinalEnabled</code>（<code>ui_state.py:188-191</code>）。</li>
+</ul>
+<hr>
+<h2 id="h-4">2. 三個必須糾正的核心觀念</h2>
+<h3 id="h-5">糾正 #1：「Bypass BP Long」≠ 把縱向交回福特原廠</h3>
+<ul>
+<li>交回原廠的唯一開關是 <strong>OP Long=OFF</strong>——此時 <code>interface.py:75-77</code> 不會設 <code>openpilotLongitudinalControl=True</code>，<code>carcontroller.py:721</code> 整段縱向區塊不執行，openpilot 完全不送油門/煞車。</li>
+<li><code>disable_BP_long_UI</code> 的兩處使用（<code>carcontroller.py:780</code>、<code>895</code>）都在 721 之內，OP Long=OFF 時是純 no-op。</li>
+<li>OP Long=ON 時，它只決定<strong>高速（&gt;50 mph）<strong>跟車是否用 <code>bp_accel/bp_gas</code> 取代上游 <code>op_accel/op_gas</code>；而且兩條 fallback 路徑（<code>carcontroller.py:902-906</code> 與 <code>911-916</code>）輸出</strong>完全相同</strong>。</li>
+</ul>
+<h3 id="h-6">糾正 #2：「Bypass BP Long + OP Long」不矛盾、不會跳 ACC 故障</h3>
+<ul>
+<li>OP Long=ON 時 openpilot 全權縱向、福特原廠 ACC 已退出，不存在兩套訊號並送衝突。</li>
+<li>Bypass=ON 只是走 <code>carcontroller.py:911</code> 的 else 直接用 <code>op_*</code>。</li>
+<li>唯一與 cruise fault 相關的是 <code>INACTIVE_GAS=-5.0</code> quirk（<code>carcontroller.py:740-741</code>、<code>values.py:48</code>）：不用油門時必須送 -5.0 否則 PCM 報 fault，這是<strong>正常設計</strong>而非開關衝突。</li>
+</ul>
+<h3 id="h-7">糾正 #3：「只開 Experimental、不開 OP Long」對縱向完全無效，且實務上設不起來</h3>
+<p>三層 gating 證據：</p>
+<ol>
+<li><strong>UI 層</strong>：<code>toggles.py:178-183</code> 在 <code>has_longitudinal_control=False</code> 時 <code>set_enabled(False)</code> + <code>set_state(False)</code> + <code>params.remove("ExperimentalMode")</code>，並顯示提示「Enable the sunnypilot longitudinal control (alpha) toggle to allow Experimental mode.」</li>
+<li><strong>開機清理</strong>：<code>selfdrived.py:117-118</code> 在 <code>not openpilotLongitudinalControl</code> 時移除 <code>ExperimentalMode</code>。</li>
+<li><strong>執行期</strong>：<code>selfdrived.py:597</code> 與 <code>card.py:321</code> 都是 <code>experimental_mode = params.get_bool("ExperimentalMode") and self.CP.openpilotLongitudinalControl</code>，OP Long=OFF 時恆為 False → <code>is_e2e</code> 恆 False → E2E 分支（<code>longitudinal_planner.py:163-167</code>）永不執行。</li>
+</ol>
+<hr>
+<h2 id="h-8">3. 變速箱：凌駕三顆開關的決定性因素</h2>
+<p>程式於執行期偵測變速箱（<code>interface.py:109-132</code>）：</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>自排 Focus</th>
+<th>手排 Focus</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>偵測條件</td>
+<td>shiftByWire ECU / 主匯流排含 <code>0x5A</code> / docs</td>
+<td>以上皆否</td>
+</tr>
+<tr>
+<td><code>minEnableSpeed</code></td>
+<td>-1（CarSpecs 預設，不覆寫）</td>
+<td><strong>20 mph ≈ 8.94 m/s ≈ 32 km/h</strong></td>
+</tr>
+<tr>
+<td><code>autoResumeSng</code>（= <code>minEnableSpeed == -1</code>）</td>
+<td><strong>True</strong></td>
+<td><strong>False</strong></td>
+</tr>
+<tr>
+<td>低速可接管？</td>
+<td>可下探至靜止</td>
+<td><strong>約 32 km/h 以下無法 engage</strong>（<code>events.py:79</code> belowEngageSpeed）</td>
+</tr>
+<tr>
+<td>靜止自動起步？</td>
+<td>可</td>
+<td><strong>不可</strong>，須踩離合/油門</td>
+</tr>
+<tr>
+<td>stop-and-go</td>
+<td><strong>可用</strong>（須 OP Long=ON）</td>
+<td><strong>本質不可行</strong></td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>⚠️ <strong>2020 Focus ST MK4 在多數市場為 6 速手排（部分市場選配 7AT）。</strong> 若是手排，本文件所有「免手動自動起步」結論<strong>一律不成立</strong>。</p>
+<p>repo 內<strong>沒有</strong>能事先區分手排/自排的指紋，只能由實車 ECU 在執行期判定。<code>values.py</code> 僅標 “Ford Focus 2018 / mHEV”，無 ST / 6MT / 7AT 字樣。</p>
+</blockquote>
+<hr>
+<h2 id="h-9">4. 共通底層機制</h2>
+<h3 id="h-10">4.1 OP Long=ON 時，gas/brake 如何產生</h3>
+<ul>
+<li><code>op_accel = op_gas = actuators.accel</code>（<code>carcontroller.py:723-724</code>，油門與煞車共用同一目標，accel 專用於煞車）。</li>
+<li>低速 creep 補償（<code>carcontroller.py:79-83, 730</code>）：依 <code>v_ego</code> 在 1~3 m/s 間內插 0.6~0 的補償。</li>
+<li>煞車 jerk 速率限制 <strong>3.5 m/s³</strong>（<code>carcontroller.py:732-734</code>，註解自承「仍可能 overshoot」）。</li>
+<li>夾擠常數（<code>values.py:45-48</code>）：<code>ACCEL_MAX=2.0</code>、<code>ACCEL_MIN=-3.5</code>、<code>MIN_GAS=-0.5</code>、<code>INACTIVE_GAS=-5.0</code>。</li>
+<li>gas/brake 互斥（<code>carcontroller.py:919-920</code>）：<code>if brake_actuate: gas = INACTIVE_GAS</code>。</li>
+</ul>
+<h3 id="h-11">4.2 「停等後誰起步」的真實機制（OP Long=ON）</h3>
+<ol>
+<li>跟停 → 進入 <code>LongCtrlState.stopping</code>，<code>output_accel</code> 以 <code>stoppingDecelRate</code> 緩降到 <code>stopAccel</code> 並<strong>持續送煞車請求</strong>保壓（<code>longcontrol.py:75-80</code>）。</li>
+<li>起步條件：<code>starting_condition = not should_stop and not cruise_standstill and not brake_pressed</code>（<code>longcontrol.py:18-21</code>）。</li>
+<li>自動 resume：<code>CC.cruiseControl.resume = enabled and cruiseState.standstill and not shouldStop</code>（<code>controlsd.py:172</code>）。</li>
+<li><strong>沒有固定 3 秒</strong>——前車一離開、<code>shouldStop</code> 一清除就起步，由 <code>autoResumeSng</code> 把關。
+<blockquote>
+<p>「停等 3 秒需手動」是**福特原廠 ACC（OP Long=OFF）**的概念，不是 openpilot 的。</p>
+</blockquote>
+</li>
+</ol>
+<h3 id="h-12">4.3 靜止保壓不是原廠 EPB 自己鎖死</h3>
+<ul>
+<li>Ford 安全層（<code>ford.h</code>）<strong>完全沒有 EBB/EPB 代碼</strong>。</li>
+<li>是 openpilot 持續送 <code>AccBrkTot_A_Rq</code> + <code>brake_actuate</code>（<code>AccBrkDecel_B_Rq</code>）+ <code>precharge</code>（<code>AccBrkPrchg_B_Rq</code>）位元（<code>fordcan.py:148/157/158</code>），由福特 PCM 執行致動。<code>stopping</code> 位元（<code>AccStopStat_B_Rq</code>）只是「通知」PCM 進入停車保持。</li>
+</ul>
+<h3 id="h-13">4.4 ICBM 沒有 RESUME</h3>
+<ul>
+<li>ICBM 只能模擬「加速/減速」鈕（<code>CcAslButtnSetIncPress</code> / <code>DecPress</code>，<code>icbm.py:20-23</code>），<strong>沒有 RESUME</strong>。</li>
+<li>因此 OP Long=OFF（原廠 ACC）時，openpilot 無法替你從靜止重新起步。</li>
+</ul>
+<h3 id="h-14">4.5 Experimental Mode（E2E）做什麼</h3>
+<ul>
+<li>在 <code>is_e2e=True</code> 時把模型輸出併入規劃：<code>output_a_target = min(e2e, mpc)</code>、<code>shouldStop = e2e OR mpc</code>（<code>longitudinal_planner.py:163-167</code>）。</li>
+<li>效果是讓車「<strong>更保守</strong>」（更小加速、更易停），<strong>不會</strong>比 MPC 更積極。</li>
+<li>額外能力：(a) 無前車彎道預判減速；(b) 無前車紅燈/停止線/靜止橫向車流停車。Chill（一般）模式兩者皆無。</li>
+</ul>
+<hr>
+<h2 id="h-15">5. 六種組合逐一剖析</h2>
+<blockquote>
+<p>每種組合統一以下結構：<strong>控制權歸屬 / 過彎減速 / 紅綠燈與路口 / Stop &amp; Go / Focus 風險與推薦度</strong>。
+推薦度分「手排 / 自排」兩值（1=最低，5=最高）。</p>
+</blockquote>
+<h3 id="h-16">組合 1｜只開 Bypass BP Long（OP Long 關、實驗關）</h3>
+<p><strong>前提判定：✅ 結論對，但理由錯。</strong> 縱向交給原廠不是因為 Bypass，而是因為 OP Long=OFF；此時 Bypass 是純 no-op，本組合縱向<strong>完全等同「三顆全關」</strong>。</p>
+<ul>
+<li><strong>控制權歸屬</strong>：油門 / 煞車 / 過彎 / 紅綠燈 / Stop&amp;Go <strong>全部福特原廠 ACC + PCM</strong>；openpilot 不送任何縱向指令。BluePilot 仍提供<strong>橫向（方向盤）</strong>。</li>
+<li><strong>過彎減速</strong>：無。原廠 ACC 不讀道路曲率，無前車維持設定速度進彎。</li>
+<li><strong>紅綠燈與路口</strong>：無。原廠不辨識號誌，無前車不會停。</li>
+<li><strong>Stop &amp; Go</strong>：跟停舒適度＝原廠調校；停等&gt;3 秒：自排→久停需手動 RES/點油門，手排→須踩離合；<strong>無法完全免手動</strong>。</li>
+<li><strong>Focus 風險與推薦度</strong>：openpilot 端<strong>零暴衝/急煞風險</strong>（不送命令）。<strong>手排 2 / 自排 4</strong>。</li>
+</ul>
+<h3 id="h-17">組合 2｜只開 OP Long（Chill，Bypass 關、實驗關）</h3>
+<p><strong>前提判定：⚠️ 大致對，但「完全免手動起步」只對自排成立；Chill 沒有任何視覺紅燈/彎道能力。</strong></p>
+<ul>
+<li><strong>控制權歸屬</strong>：油門/煞車由 <strong>openpilot（Comma 標準 MPC）</strong>，繞過原廠「需按 RESUME」限制；過彎僅被動 <code>limit_accel_in_turns</code>；紅綠燈無視覺停車；Stop&amp;Go 自排 openpilot、手排不可用。</li>
+<li><strong>過彎減速</strong>：弱。<code>is_e2e</code> 恆 False，無前車彎道只「不再加速」，不主動踩煞車。</li>
+<li><strong>紅綠燈與路口</strong>：<strong>無</strong>。純 MPC 只看雷達前車＋cruise 假障礙。</li>
+<li><strong>Stop &amp; Go</strong>：自排→跟停線性（creep 補償＋3.5 m/s³ jerk 限制）、停等後 <strong>openpilot 自動起步、完全免手動</strong>、暴衝風險低（可能略有起步延遲）；手排→<strong>不可用</strong>。</li>
+<li><strong>Focus 風險與推薦度</strong>：mHEV 煞車/回充由 PCM 分配，openpilot 無法干預；OP Long 屬 alpha。<strong>手排 1 / 自排 3</strong>。</li>
+</ul>
+<h3 id="h-18">組合 3｜OP Long + Experimental（完全體 E2E，Bypass 關）</h3>
+<p><strong>前提判定：⚠️ E2E 確實啟用；但「靜止 Hold 由原廠 EPB 還是 Comma」是假二選一——是 Comma 持續送煞車、PCM 執行，無原廠 EPB latch。</strong></p>
+<ul>
+<li><strong>控制權歸屬</strong>：油門/煞車 openpilot；過彎/紅綠燈由 <strong>E2E 主導</strong>；Stop&amp;Go 取決於變速箱。</li>
+<li><strong>過彎減速</strong>：<strong>有</strong>。模型 <code>desiredAcceleration</code> 經 <code>min(e2e, mpc)</code> 主動降速（實車可靠度無法由程式碼保證）。</li>
+<li><strong>紅綠燈與路口</strong>：<strong>有視覺停車能力</strong>（<code>output_should_stop_e2e</code>）；綠燈起步：自排免按鍵、手排不可。</li>
+<li><strong>Stop &amp; Go</strong>：自排→跟停保壓由 openpilot 控制、<code>shouldStop</code> 清除即自動起步、<strong>完全免手動</strong>、起步線性；手排→不可用。</li>
+<li><strong>Focus 風險與推薦度</strong>：急煞 overshoot＋mHEV 手感不可控＋E2E 偵測不保證可靠（須隨時接管）。<strong>手排 1 / 自排 4</strong>。</li>
+</ul>
+<h3 id="h-19">組合 4｜Bypass BP Long + OP Long（你以為的「邏輯矛盾」）</h3>
+<p><strong>前提判定：❌ 不矛盾、不會跳 ACC 故障。</strong> OP Long=ON openpilot 全權縱向、原廠已退出；Bypass=ON 只是走 <code>carcontroller.py:911</code> 的 else 直接用 <code>op_*</code>。</p>
+<ul>
+<li><strong>控制權歸屬</strong>：與組合 2 幾乎相同；唯一差別是 <strong>&gt;50 mph 高速跟車不套用 BP 微調</strong>。</li>
+<li><strong>過彎減速 / 紅綠燈</strong>：<strong>無</strong>（Experimental=OFF，同組合 2）。</li>
+<li><strong>Stop &amp; Go</strong>：<strong>與組合 2 在塞車完全相同</strong>——低速一律 fallback 到 <code>op_*</code>，Bypass 在此無作用。</li>
+<li><strong>Focus 風險與推薦度</strong>：與組合 2 同層級。Bypass=ON 對塞車毫無幫助。<strong>手排 1 / 自排 3</strong>。</li>
+</ul>
+<h3 id="h-20">組合 5｜只開 Experimental（Bypass 關、OP Long 關）</h3>
+<p><strong>前提判定：❌ 重大錯誤。</strong> 此設定<strong>實務上設不起來</strong>：OP Long=OFF 時 UI 直接把 Experimental 灰掉並 <code>params.remove("ExperimentalMode")</code>。<strong>「UI 顯示可起步卻被原廠 3 秒鎖死」的衝突在程式上不可能發生</strong>——openpilot 此時根本沒有起步 UI 也沒有 RESUME。</p>
+<ul>
+<li><strong>控制權歸屬</strong>：<strong>縱向 100% 福特原廠 ACC</strong>，與組合 1 <strong>完全等價</strong>。</li>
+<li><strong>過彎 / 紅綠燈 / Stop&amp;Go</strong>：openpilot 零貢獻。</li>
+<li><strong>真正風險</strong>：<strong>認知錯誤</strong>——誤以為開了 Experimental 就有 E2E 能力，若因此放鬆監看會有追撞風險。</li>
+<li><strong>推薦度</strong>：<strong>1 / 1</strong>（縱向等同組合 1，但易誤解，不該當獨立設定）。</li>
+</ul>
+<h3 id="h-21">組合 6｜Bypass BP Long + Experimental（OP Long 關或開）</h3>
+<p><strong>前提判定：❌ Bypass 與 Experimental 不互斥</strong>——一個在致動層、一個在規劃層，獨立運作，只共同受 OP Long gating。</p>
+<ul>
+<li><strong>OP Long=OFF 子情況</strong>：退化為組合 5/1，<strong>縱向全原廠</strong>。</li>
+<li><strong>OP Long=ON 子情況</strong>：= 啟用 E2E 規劃 + 關閉 BP 高速微調 ≈ <strong>接近原生 sunnypilot E2E 縱向</strong>，邏輯一致、不混亂。
+<ul>
+<li>過彎減速、紅綠燈視覺停車：<strong>有</strong>（同組合 3）。</li>
+<li>Stop &amp; Go：自排免手動自動起步、手排不可用；Bypass=ON 對塞車無影響。</li>
+</ul>
+</li>
+<li><strong>推薦度</strong>：OP Long=ON 時 <strong>手排 1 / 自排 4</strong>；OP Long=OFF 時退化為 <strong>1 / 1</strong>。</li>
+</ul>
+<hr>
+<h2 id="h-22">6. 跨組合比較表</h2>
+<table>
+<thead>
+<tr>
+<th>組合 (Bypass / OP Long / Exp)</th>
+<th>油門·煞車控制權</th>
+<th>過彎主動減速</th>
+<th>紅綠燈視覺停起</th>
+<th>Stop&amp;Go 免手動起步（手排/自排）</th>
+<th>推薦度（手排/自排）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1. ON / OFF / OFF</td>
+<td>福特原廠 ACC+PCM</td>
+<td>無</td>
+<td>無</td>
+<td>不可 / 原廠久停需手動</td>
+<td>2 / 4</td>
+</tr>
+<tr>
+<td>2. OFF / ON / OFF (Chill)</td>
+<td>openpilot</td>
+<td>無（僅夾上限）</td>
+<td>無（純 MPC）</td>
+<td>不可 / <strong>可免手動</strong></td>
+<td>1 / 3</td>
+</tr>
+<tr>
+<td>3. OFF / ON / ON (完全體)</td>
+<td>openpilot</td>
+<td><strong>有 (E2E)</strong></td>
+<td><strong>有 (E2E)</strong></td>
+<td>不可 / <strong>可免手動</strong></td>
+<td>1 / 4</td>
+</tr>
+<tr>
+<td>4. ON / ON / OFF</td>
+<td>openpilot（無 BP 微調）</td>
+<td>無</td>
+<td>無</td>
+<td>不可 / <strong>可免手動</strong>（市區同組合 2）</td>
+<td>1 / 3</td>
+</tr>
+<tr>
+<td>5. 任意 / OFF / ON</td>
+<td>福特原廠（實務設不起來，縱向同組合 1）</td>
+<td>無</td>
+<td>無</td>
+<td>同組合 1</td>
+<td>1 / 1</td>
+</tr>
+<tr>
+<td>6. ON / ON / ON</td>
+<td>openpilot E2E（≈原生 sunnypilot）</td>
+<td>有 (E2E)</td>
+<td>有 (E2E)</td>
+<td>不可 / <strong>可免手動</strong></td>
+<td>1 / 4（OP 關時退化 1/1）</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="h-23">7. 給 Focus ST MK4 車主的建議</h2>
+<ul>
+<li><strong>自排車</strong>：
+<ul>
+<li>想要塞車免手動跟停起步 ＋ 紅燈/彎道輔助 → <strong>組合 3（OP Long + Experimental）</strong> 最完整。</li>
+<li>不要 E2E 視覺停車（偏好純雷達跟車）→ <strong>組合 2</strong>。</li>
+<li>Bypass BP Long 只在 &gt;50 mph 巡航有微調差異，市區開關無感。</li>
+</ul>
+</li>
+<li><strong>手排車</strong>：
+<ul>
+<li>三顆開關對 stop-and-go 都救不了你；openpilot 的價值只剩 &gt;32 km/h 的橫向 ＋ 巡航/彎道減速。</li>
+<li>建議 <strong>組合 1（原廠縱向 + BluePilot 橫向）</strong> 最穩。</li>
+</ul>
+</li>
+</ul>
+<hr>
+<h2 id="h-24">8. 重要提醒與免責</h2>
+<ol>
+<li><strong>先確認變速箱</strong>再談 stop-and-go：手排無自動走停、約 32 km/h 以下無法接管。</li>
+<li><strong>OP Long 是 <code>DEVELOPMENT_ONLY</code> alpha</strong>，release 分支會被移除，須全程準備接管。</li>
+<li><strong>E2E 視覺停減速可靠度無法由程式碼保證</strong>（模型權重為二進位），且只會讓車更保守、不會更積極。</li>
+<li><strong>急煞手感有限</strong>：3.5 m/s³ jerk 限制仍可能 overshoot；mHEV 煞車/回充由 PCM 決定，openpilot 無法干預。</li>
+<li><strong>OP Long=OFF 時 openpilot 無 RESUME</strong>（ICBM 只有加/減速），久停起步永遠要自己處理。</li>
+<li><strong>Bypass BP Long 對塞車完全無作用</strong>，別誤以為它會把縱向交回福特原廠。</li>
+</ol>
+<blockquote>
+<p>本文件為<strong>原始碼靜態分析</strong>結果，非實車驗證。實車行為另受福特 PCM/韌體、雷達有效性、模型權重、指紋辨識結果等執行期因素影響。任何輔助駕駛功能皆須駕駛全程監看並隨時準備接管。</p>
+</blockquote>
+<hr>
+<h2 id="h-25">附錄 A：程式碼證據索引</h2>
+<blockquote>
+<p>路徑相對於 repo 根目錄。<code>opendbc_repo/</code> 為 opendbc 子模組。</p>
+</blockquote>
+<h3 id="h-26">開關定義與 gating</h3>
+<ul>
+<li><code>selfdrive/ui/bp/layouts/settings/bluepilot.py:364-371</code> — Bypass BP Long 開關定義（<code>disable_BP_long_UI</code>）</li>
+<li><code>selfdrive/ui/layouts/settings/developer.py:74-80, 120-125</code> — OP Long 開關（<code>AlphaLongitudinalEnabled</code>，DEVELOPMENT_ONLY）</li>
+<li><code>selfdrive/ui/layouts/settings/toggles.py:55-60, 173-197</code> — Experimental Mode 開關與 gating</li>
+<li><code>selfdrive/ui/ui_state.py:186-191</code> — <code>has_longitudinal_control</code> 來源</li>
+<li><code>common/params_keys.h:40-42, 291</code> — params 宣告與預設值</li>
+<li><code>selfdrive/car/card.py:100, 112, 321</code> — <code>alpha_long</code> 傳入；執行期 experimental gating</li>
+<li><code>selfdrive/selfdrived/selfdrived.py:117-118, 533, 597</code> — 移除/發佈/gating experimental</li>
+<li><code>opendbc_repo/opendbc/car/ford/interface.py:70-77</code> — <code>alphaLongitudinalAvailable</code> / <code>openpilotLongitudinalControl</code></li>
+</ul>
+<h3 id="h-27">Ford 縱向核心</h3>
+<ul>
+<li><code>opendbc_repo/opendbc/car/ford/carcontroller.py:721</code> — <strong>整段縱向控制由 <code>if openpilotLongitudinalControl</code> 守門</strong></li>
+<li><code>opendbc_repo/opendbc/car/ford/carcontroller.py:723-741</code> — <code>op_accel/op_gas</code>、creep 補償、jerk 限制、INACTIVE_GAS quirk</li>
+<li><code>opendbc_repo/opendbc/car/ford/carcontroller.py:753-759</code> — brake_actuate 遲滯</li>
+<li><code>opendbc_repo/opendbc/car/ford/carcontroller.py:771-777, 895-916</code> — bpSpeedAllow 速度死區、<code>apply_bp_long</code> 條件、兩條 fallback</li>
+<li><code>opendbc_repo/opendbc/car/ford/carcontroller.py:139-142</code> — <code>MAX_URBAN_SPEED_MPH=45</code>、<code>following_accel_ROC=0.002</code>、brake 門檻</li>
+<li><code>opendbc_repo/opendbc/car/ford/values.py:45-48</code> — <code>ACCEL_MAX/MIN</code>、<code>MIN_GAS</code>、<code>INACTIVE_GAS</code></li>
+<li><code>opendbc_repo/opendbc/car/ford/fordcan.py:147-160</code> — ACCDATA 訊號對應</li>
+<li><code>opendbc_repo/opendbc/sunnypilot/car/ford/icbm.py:20-23</code> — ICBM 只有加/減速、無 RESUME</li>
+</ul>
+<h3 id="h-28">Stop-and-go / standstill / resume</h3>
+<ul>
+<li><code>selfdrive/controls/lib/longcontrol.py:13-48</code> — 狀態機（stopping/starting 轉換條件）</li>
+<li><code>selfdrive/controls/lib/longcontrol.py:75-92</code> — stopping 保壓、starting <code>startAccel</code></li>
+<li><code>selfdrive/controls/controlsd.py:170-172</code> — <code>cruiseControl.resume / override / cancel</code></li>
+<li><code>opendbc_repo/opendbc/car/ford/interface.py:109-115, 130, 132</code> — 變速箱偵測、<code>minEnableSpeed</code>、<code>autoResumeSng</code></li>
+<li><code>opendbc_repo/opendbc/car/interfaces.py:235</code> — <code>autoResumeSng</code> 預設 True（被 Ford 覆寫）</li>
+<li><code>selfdrive/selfdrived/events.py:79</code> — belowEngageSpeed 提示</li>
+</ul>
+<h3 id="h-29">Experimental / E2E 規劃</h3>
+<ul>
+<li><code>selfdrive/controls/lib/longitudinal_planner.py:36-47</code> — <code>limit_accel_in_turns</code>（Chill 唯一彎道處理）</li>
+<li><code>selfdrive/controls/lib/longitudinal_planner.py:124-131</code> — <code>allow_throttle</code>（低速 creep 放行）</li>
+<li><code>selfdrive/controls/lib/longitudinal_planner.py:158-170</code> — E2E vs MPC 選擇</li>
+<li><code>sunnypilot/selfdrive/controls/lib/longitudinal_planner.py:39-44</code> — <code>is_e2e()</code></li>
+<li><code>selfdrive/modeld/modeld.py:54-75</code> — 模型 <code>desiredAcceleration</code> / <code>shouldStop</code> 來源</li>
+</ul>
+<h3 id="h-30">Focus 平台</h3>
+<ul>
+<li><code>opendbc_repo/opendbc/car/ford/values.py:77-82, 196-199</code> — <code>FORD_FOCUS_MK4</code> / Footnote.FOCUS（C519）</li>
+<li><code>opendbc_repo/opendbc/car/ford/fingerprints.py:185-198</code> — Focus 指紋</li>
+<li><code>opendbc_repo/opendbc/car/ford/interface.py:38, 54-60</code> — <code>radarUnavailable</code>、<code>radarDelay</code>（Delphi MRR）</li>
+<li><code>opendbc_repo/opendbc/safety/modes/ford.h</code> — Ford 安全層（無 EBB/EPB 代碼）</li>
+</ul>
+<hr>
+<h2 id="h-31">附錄 B：無法由程式碼確認的事項</h2>
+<ol>
+<li><strong>特定 Focus ST 會被判成手排或自排</strong>：取決於實車是否回報 shiftByWire ECU / <code>0x5A</code> / docs，repo 無對應指紋可事先斷定。</li>
+<li>**「2020 Focus ST 常見 6MT、選配 7AT」**屬市場知識，<code>values.py</code> 僅標 2018 / mHEV。</li>
+<li><strong>E2E 模型對紅燈/停止線/彎道的實車可靠度</strong>：模型權重為二進位，程式碼只能確認資料路徑會把 <code>shouldStop</code>/<code>desiredAcceleration</code> 帶進規劃器。</li>
+<li><strong>mHEV 的煞車 vs 回充分配</strong>：由福特 PCM 決定，openpilot 無法影響（<code>carcontroller.py:717</code> 註解），實車減速感受可能與請求值有落差。</li>
+<li><strong>名詞</strong>：repo 稱此系統為「Adaptive Cruise Control with Lane Centering」，無「Co-Pilot360」；安全層無「EBB / EPB」代碼。</li>
+<li>**原廠 ACC「停等 3 秒需手動」**屬市場知識，repo 內無此門檻數值。</li>
+</ol>
+<hr>
+<p><em>本文件由原始碼分析自動產出，僅供技術理解參考。</em></p>
+
+</article>
+</body>
+</html>
