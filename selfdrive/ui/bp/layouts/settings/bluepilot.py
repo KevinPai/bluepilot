@@ -72,7 +72,6 @@ class BluePilotLayout(Widget):
       ("disable_BP_lat_UI", self._disable_BP_lat),
       ("disable_BP_long_UI", self._disable_BP_long),
       ("disable_downhill_comp_UI", self._disable_dowhill_comp),
-      ("bp_ford_stop_tuning", self._ford_stop_tuning),
       ("BPUIDebugLog", self._ui_debug_log),
     )
 
@@ -380,26 +379,6 @@ class BluePilotLayout(Widget):
       icon="chffr_wheel.png"
     )
 
-    # Ford stop tuning toggle: shorten open-loop stopping + reduce creep + latch brake bit.
-    self._ford_stop_tuning = toggle_item(
-      lambda: tr("Ford Stop Tuning"),
-      lambda: tr("More consistent stop-gap: shorter open-loop stopping window, reduced creep, latched brake bit. Reboot to fully apply (vEgoStopping). Independent of Stop Smoothness."),
-      initial_state=self._safe_get_bool(self._params, "bp_ford_stop_tuning"),
-      callback=lambda state: self._toggle_callback(state, "bp_ford_stop_tuning"),
-      icon="chffr_wheel.png"
-    )
-
-    # Stop smoothness slider (anti nose-dive at final stop; 0 = stock behavior)
-    self._stop_smoothness = float_control_item(
-      lambda: tr("Stop Smoothness"),
-      lambda: tr("Soften braking at the final stop to reduce nose-dive (0 = stock, higher = softer)."),
-      param="bp_stop_smoothness",
-      min_value=0.0,
-      max_value=1.0,
-      step=0.05,
-      icon="chffr_wheel.png",
-    )
-
     # Preferred WiFi Network selector
     self._preferred_network_action = ButtonAction(lambda: tr("SELECT"))
     self._preferred_network_action.set_value(lambda: self._get_preferred_network_display())
@@ -442,8 +421,6 @@ class BluePilotLayout(Widget):
       SectionHeader(tr("Longitudinal Tuning")),
       self._disable_BP_long,
       self._disable_dowhill_comp,
-      self._stop_smoothness,
-      self._ford_stop_tuning,
       SectionHeader(tr("Lateral Tuning")),
       self._disable_BP_lat,
       self._enable_human_turn_detection,

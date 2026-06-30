@@ -1,8 +1,5 @@
-# from openpilot.common.params import Params
-from openpilot.common.swaglog import cloudlog
 from openpilot.selfdrive.selfdrived.events import ET
 from opendbc.car import DT_CTRL
-from numpy import interp
 
 def hysteresis(current_value, old_value, target: float, delta: float):
   if target < current_value < min(target + delta, 0):
@@ -162,59 +159,3 @@ def get_hev_engine_on_reason_text(reason_value):
     13: "Drive Mode",
   }
   return engine_on_reasons.get(int(reason_value), "Unknown")
-
-
-# Stop-smoothing lookup tables: 0.0 = stock behavior, 1.0 = softest stop.
-_STOP_SMOOTH_BP = [0.0, 1.0]
-_STOP_SMOOTH_ACCEL_V = [-2.0, -0.8]  # m/s^2: cap on final brake / standstill hold
-_STOP_SMOOTH_JERK_V = [3.5, 0.5]     # m/s^3: max rate the brake may deepen near the stop
-
-
-def apply_stop_smoothing(accel, stopping, long_active, smoothness, accel_last, dt_step):
-  """Soften the final-stop braking to reduce nose-dive.
-
-  Only ever reduces braking (never deepens, never adds gas), and only while the car is
-  coming to rest (LongCtrlState.stopping). Pure function for testability.
-  Returns (shaped_accel, new_accel_last).
-  """
-  # No-op: feature off, not engaged, or not in the stopping phase -> preserve full braking authority.
-  if smoothness <= 0.0 or not long_active or not stopping:
-    return accel, accel
-
-  soft_stop_accel = float(interp(smoothness, _STOP_SMOOTH_BP, _STOP_SMOOTH_ACCEL_V))
-  soft_jerk = float(interp(smoothness, _STOP_SMOOTH_BP, _STOP_SMOOTH_JERK_V))
-
-  # 1) Limit how fast the brake may deepen -> gentle touchdown.
-  accel = max(accel, accel_last - soft_jerk * dt_step)
-  # 2) Cap the final brake / hold so it never dives to the stock -2.0 m/s^2.
-  accel = max(accel, soft_stop_accel)
-  # Stopping output is always a brake request; never command gas, even if accel_last was positive.
-  accel = min(accel, 0.0)
-  return accel, accel
-
-
-# Ford stop-tuning constants (see docs/superpowers/specs/2026-06-28-ford-stop-consistency-design.md).
-FORD_STOP_VEGO_STOPPING         = 0.25   # B1: enter open-loop stopping at 0.25 m/s instead of 0.5
-FORD_STOP_CREEP_MAX             = 0.3    # B3: low-speed creep brake authority, reduced from stock 0.6
-FORD_STOP_BRAKE_RELEASE_LATCHED = 0.0    # B4: brake-bit release threshold while stopping (normal -0.06)
-
-
-def apply_creep_compensation(accel: float, v_ego: float, max_creep: float = 0.6) -> float:
-  # Compensate for engine creep at low speed. Either the ABS does not account for engine
-  # creep, or the correction is very slow. max_creep defaults to the stock 0.6 so callers
-  # that do not opt into stop tuning keep today's behavior.
-  # TODO: verify this applies to EV/hybrid.
-  creep_accel = interp(v_ego, [1., 3.], [max_creep, 0.])
-  creep_accel = interp(accel, [0., 0.2], [creep_accel, 0.])
-  return accel - creep_accel
-
-
-def brake_request_hysteresis(accel: float, last: bool, long_active: bool, engage: float, release: float) -> bool:
-  # Two-threshold latch for the Ford brake-request bit. Engage below `engage`, release above
-  # `release`, otherwise hold `last`. Raising `release` toward 0 (stop tuning) keeps the bit
-  # latched through the small hover zone near a stop, preventing chatter.
-  if accel > release or not long_active:
-    return False
-  if accel < engage:
-    return True
-  return last

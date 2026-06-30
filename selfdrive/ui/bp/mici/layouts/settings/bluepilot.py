@@ -69,8 +69,6 @@ class BluePilotLayoutMici(NavWidget):
     self.disable_BP_lat = BigParamControlBP("disable BP lateral control", "disable_BP_lat_UI")
     self.disable_BP_long = BigParamControlBP("bypass BP longitudinal control", "disable_BP_long_UI")
     self.disable_dowhill_comp = BigParamControlBP("disable downhill compensation", "disable_downhill_comp_UI")
-    self.ford_stop_tuning = BigParamControlBP("ford stop tuning", "bp_ford_stop_tuning")
-    self.stop_smoothness = BigParamFloatControl("stop smoothness", "bp_stop_smoothness", min=0.0, max=1.0, step=0.05)
     self.clear_model_cache = BigButtonBP("clear crashed model", "", "icons_mici/settings/device/reboot.png")
     self.clear_model_cache.set_click_callback(self._clear_model_cache)
     self.ui_debug_log = BigParamControlBP("ui debug logging", "BPUIDebugLog")
@@ -118,8 +116,6 @@ class BluePilotLayoutMici(NavWidget):
       self.disable_BP_lat,
       self.disable_BP_long,
       self.disable_dowhill_comp,
-      self.stop_smoothness,
-      self.ford_stop_tuning,
       self.clear_model_cache,
       self.ui_debug_log,
     ])
@@ -140,7 +136,6 @@ class BluePilotLayoutMici(NavWidget):
       ("disable_BP_lat_UI", self.disable_BP_lat),
       ("disable_BP_long_UI", self.disable_BP_long),
       ("disable_downhill_comp_UI", self.disable_dowhill_comp),
-      ("bp_ford_stop_tuning", self.ford_stop_tuning),
       ("BPAnimateSteeringWheel", self.animate_steering_wheel),
       ("BPUIDebugLog", self.ui_debug_log),
       ("mici_hide_onroad_fade", self.hide_fade),

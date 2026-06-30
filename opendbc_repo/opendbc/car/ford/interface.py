@@ -7,7 +7,6 @@ from opendbc.car.ford.carstate import CarState
 from opendbc.car.ford.fordcan import CanBus
 from opendbc.car.ford.radar_interface import RadarInterface
 from opendbc.car.ford.values import CarControllerParams, DBC, Ecu, FordFlags, RADAR, FordSafetyFlags
-from opendbc.car.ford.helpers import FORD_STOP_VEGO_STOPPING
 from opendbc.car.interfaces import CarInterfaceBase
 # from bluepilot.params.bp_params import apply_interface_params
 # from bluepilot.logger.bp_logger import debug, info, warning, error, critical
@@ -129,17 +128,6 @@ class CarInterface(CarInterfaceBase):
 
     # LCA can steer down to zero
     ret.minSteerSpeed = 0.
-
-    # BluePilot Ford stop tuning (B1): shorten the open-loop stopping window so the car tracks
-    # lead distance closer to 0 -> more consistent run-to-run stop gap. Read once at init
-    # (reboot to change). Guarded so offline docs generation never touches Params.
-    if not docs:
-      try:
-        from openpilot.common.params import Params
-        if Params().get_bool("bp_ford_stop_tuning"):
-          ret.vEgoStopping = FORD_STOP_VEGO_STOPPING
-      except Exception:
-        carlog.exception("BluePilot Ford stop tuning: vEgoStopping override skipped")
 
     ret.autoResumeSng = ret.minEnableSpeed == -1.
     ret.centerToFront = ret.wheelbase * 0.44

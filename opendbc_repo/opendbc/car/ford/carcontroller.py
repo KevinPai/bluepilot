@@ -14,7 +14,7 @@ from opendbc.car.ford.values import CarControllerParams, FordFlags, CAR
 from opendbc.car.interfaces import CarControllerBase, V_CRUISE_MAX
 from selfdrive.modeld.constants import ModelConstants  # for calculations
 from common.pid import PIDController # PID control of lateral
-from opendbc.car.ford.helpers import compute_dm_msg_values, apply_stop_smoothing, apply_creep_compensation, brake_request_hysteresis, FORD_STOP_CREEP_MAX, FORD_STOP_BRAKE_RELEASE_LATCHED
+from opendbc.car.ford.helpers import compute_dm_msg_values
 from openpilot.common.params import Params
 from opendbc.sunnypilot.car.ford.icbm import IntelligentCruiseButtonManagementInterface
 
@@ -122,8 +122,6 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
     self.pc_blend_ratio = 0.5
     self.disable_BP_lat_UI = False   # updated from UI: disable BP lateral control
     self.disable_BP_long_UI = False  # updated from UI: bypass BP longitudinal (use stock logic)
-    self.bp_stop_smoothness = 0.0  # updated from UI: 0 = stock, 1 = softest final stop
-    self.stop_accel_last = 0.0     # tracks shaped stop accel for jerk-limited touchdown
     self.anti_overshoot_curvature_last = 0.0 # initialize anti_overshoot_curvature_last
     self._bp_long_active_last = False  # True if we sent BP long values last frame (for clean transition off BP long)
     self.bp_gas_last = 0.0
@@ -252,9 +250,6 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
     # Ford long: bypass BP longitudinal toggle (gas/accel ROC use __init__ defaults only)
     self.disable_BP_long_UI = self.params.get_bool("disable_BP_long_UI")
     self.disable_downhill_comp_UI = self.params.get_bool("disable_downhill_comp_UI")
-    self.bp_stop_smoothness = float(self.params.get("bp_stop_smoothness", return_default=True))
-    self.ford_stop_tuning = self.params.get_bool("bp_ford_stop_tuning")
-    self.ford_stop_creep_max = FORD_STOP_CREEP_MAX if self.ford_stop_tuning else 0.6
 
   def handle_post_lane_change_transition(self, path_angle, path_offset, desired_curvature_rate):
     """
@@ -725,7 +720,9 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
         # Compensate for engine creep at low speed.
         # Either the ABS does not account for engine creep, or the correction is very slow
         # TODO: verify this applies to EV/hybrid
-        op_accel = apply_creep_compensation(op_accel, CS.out.vEgo, self.ford_stop_creep_max)
+        creep_accel = interp(CS.out.vEgo, [1., 3.], [0.6, 0.])
+        creep_accel = interp(op_accel, [0., 0.2], [creep_accel, 0.])
+        op_accel -= creep_accel
 
         # The stock system has been seen rate limiting the brake accel to 5 m/s^3,
         # however even 3.5 m/s^3 causes some overshoot with a step response.
@@ -750,14 +747,11 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
 
       accel_pitch_compensated = op_accel + accel_due_to_pitch
       stopping = CC.actuators.longControlState == LongCtrlState.stopping
-      # B4: while stopping with tuning on, raise the release threshold so the brake bit stays
-      # latched through the hover zone near a stop (anti-chatter). engage stays at -0.14.
-      brake_release = self.brake_actuate_release
-      if self.ford_stop_tuning and stopping:
-        brake_release = FORD_STOP_BRAKE_RELEASE_LATCHED
-      op_brake_actuate = brake_request_hysteresis(
-        accel_pitch_compensated, self.op_brake_actuate_last, CC.longActive,
-        self.brake_actuate_target, brake_release)
+      op_brake_actuate = self.op_brake_actuate_last
+      if accel_pitch_compensated < self.brake_actuate_target:
+        op_brake_actuate = True
+      if accel_pitch_compensated > self.brake_actuate_release or not CC.longActive:
+        op_brake_actuate = False
       # target_speed = float(np.clip(actuators.speed * self.target_speed_multiplier, 0, V_CRUISE_MAX))
 
       # if not CC.longActive and getattr(hud_control, "setSpeed", None) is not None:
@@ -913,13 +907,6 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
         brake_actuate = op_brake_actuate
         precharge_actuate = op_brake_actuate
         bp_long_used = False
-
-      # BluePilot: soften the final stop to reduce nose-dive. No-op when bp_stop_smoothness == 0,
-      # and only ever reduces braking while in LongCtrlState.stopping (see helpers.apply_stop_smoothing).
-      accel, self.stop_accel_last = apply_stop_smoothing(
-        accel, stopping, CC.longActive, self.bp_stop_smoothness, self.stop_accel_last,
-        CarControllerParams.ACC_CONTROL_STEP * DT_CTRL,
-      )
 
       # no brake and gas at the same timne
       if brake_actuate:

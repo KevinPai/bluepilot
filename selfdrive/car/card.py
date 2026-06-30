@@ -525,8 +525,6 @@ class Car:
       "controllerGas": float(getattr(cc_obj, "gas", 0.0)),
       "bpLongActiveLast": bool(getattr(cc_obj, "_bp_long_active_last", False)),
       "bpSpeedAllow": bool(getattr(cc_obj, "bpSpeedAllow", False)),
-      "stopSmoothness": float(getattr(cc_obj, "bp_stop_smoothness", 0.0)),
-      "fordStopTuning": bool(getattr(cc_obj, "ford_stop_tuning", False)),
       "debug": {
         "fscsEnabled": True,
         "fscsMode": fscs_mode,
