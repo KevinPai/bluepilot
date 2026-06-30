@@ -83,6 +83,13 @@ class Car:
 
     self.last_actuators_output = structs.CarControl.Actuators()
     self.ford_observe_last_log_t = 0.0
+    self.ford_observe_prev_lead_valid = False
+    self.ford_observe_prev_d_rel = 0.0
+    self.ford_observe_prev_v_rel = 0.0
+    self.ford_observe_lead_stable_since = 0.0
+    self.ford_observe_source_key = None
+    self.ford_observe_source_transition_t = 0.0
+    self.ford_observe_resume_lead_move_t = 0.0
 
     self.params = Params()
 
@@ -325,8 +332,17 @@ class Car:
     self.ford_observe_last_log_t = now
 
     planner_a_target = 0.0
+    planner_should_stop = False
+    planner_source = 0
     if self.sm.seen['longitudinalPlan']:
-      planner_a_target = float(getattr(self.sm['longitudinalPlan'], "aTarget", 0.0))
+      longitudinal_plan = self.sm['longitudinalPlan']
+      planner_a_target = float(getattr(longitudinal_plan, "aTarget", 0.0))
+      planner_should_stop = bool(getattr(longitudinal_plan, "shouldStop", False))
+      planner_source_raw = getattr(longitudinal_plan, "longitudinalPlanSource", 0)
+      try:
+        planner_source = int(getattr(planner_source_raw, "raw", planner_source_raw))
+      except (TypeError, ValueError):
+        planner_source = str(planner_source_raw)
 
     long_state = getattr(CC.actuators, "longControlState", 0)
     try:
@@ -356,9 +372,137 @@ class Car:
         "ttc": d_rel / (-v_rel) if d_rel > 0.0 and v_rel < 0.0 else 60.0,
       })
 
+    lead_valid = bool(radar["valid"])
+    d_rel = float(radar["dRel"])
+    v_rel = float(radar["vRel"])
+    v_ego = max(float(CS.vEgo), 0.0)
+    prev_lead_valid = self.ford_observe_prev_lead_valid
+    prev_d_rel = self.ford_observe_prev_d_rel
+
+    cut_in_detected = False
+    cut_out_detected = False
+    if lead_valid and prev_lead_valid:
+      cut_in_detected = d_rel < prev_d_rel - max(4.0, 0.18 * max(prev_d_rel, 1.0)) or (v_rel < -4.0 and d_rel < 25.0)
+      cut_out_detected = d_rel > prev_d_rel + max(6.0, 0.25 * max(prev_d_rel, 1.0))
+    elif prev_lead_valid and not lead_valid:
+      cut_out_detected = True
+
+    if lead_valid and not cut_in_detected and not cut_out_detected:
+      if not prev_lead_valid or self.ford_observe_lead_stable_since <= 0.0:
+        self.ford_observe_lead_stable_since = now
+    elif lead_valid:
+      self.ford_observe_lead_stable_since = now
+    else:
+      self.ford_observe_lead_stable_since = 0.0
+
+    lead_stability_age = now - self.ford_observe_lead_stable_since if self.ford_observe_lead_stable_since > 0.0 else 0.0
+    lead_stable = lead_valid and lead_stability_age >= 1.0 and abs(v_rel) < 6.0
+
+    source_key = (
+      bool(self.CP.openpilotLongitudinalControl),
+      bool(CC.longActive),
+      bool(CS.cruiseState.enabled),
+      bool(CS.cruiseState.standstill),
+      lead_valid,
+      long_state,
+      planner_source,
+    )
+    if self.ford_observe_source_key is None:
+      self.ford_observe_source_key = source_key
+      self.ford_observe_source_transition_t = now
+    elif source_key != self.ford_observe_source_key:
+      self.ford_observe_source_key = source_key
+      self.ford_observe_source_transition_t = now
+    source_transition_age = now - self.ford_observe_source_transition_t
+
+    human_override = bool(CS.gasPressed or CS.brakePressed)
+    stock_time_gap_measured = d_rel / max(v_ego, 0.5) if lead_valid and d_rel > 0.0 else None
+    comfort_decel = 1.4
+    required_stop_distance = (v_ego * v_ego) / (2.0 * comfort_decel) + 2.5
+    stop_distance_margin = d_rel - required_stop_distance if lead_valid else None
+
+    city_stop_gap_target = 4.5
+    high_speed_time_gap_target = 1.7 * v_ego + 2.0
+    blend_ratio = min(max((v_ego - 5.0) / 15.0, 0.0), 1.0)
+    target_gap = city_stop_gap_target * (1.0 - blend_ratio) + high_speed_time_gap_target * blend_ratio
+    gap_error = d_rel - target_gap if lead_valid else None
+
+    gap_too_small = lead_valid and stop_distance_margin is not None and stop_distance_margin < 0.5
+    soft_stop_candidate = (
+      bool(self.CP.openpilotLongitudinalControl) and CC.longActive and low_speed and lead_stable and
+      not human_override and not cut_in_detected and not cut_out_detected and v_rel < -0.05 and d_rel < 45.0 and
+      stop_distance_margin is not None and stop_distance_margin > 1.0
+    )
+    glide_allowed = soft_stop_candidate and gap_error is not None and gap_error > 1.5 and radar["ttc"] > 4.0
+    resume_candidate = bool(CS.standstill and lead_valid and (float(radar["vLead"]) > 0.35 or v_rel > 0.35))
+    if resume_candidate and self.ford_observe_resume_lead_move_t <= 0.0:
+      self.ford_observe_resume_lead_move_t = now
+    elif not CS.standstill or not lead_valid:
+      self.ford_observe_resume_lead_move_t = 0.0
+
+    resume_lead_move_age = now - self.ford_observe_resume_lead_move_t if self.ford_observe_resume_lead_move_t > 0.0 else None
+    car_output_accel = float(getattr(self.last_actuators_output, "accel", 0.0))
+    controlsd_accel = float(getattr(CC.actuators, "accel", 0.0))
+    resume_command_delay = resume_lead_move_age if resume_lead_move_age is not None and car_output_accel > 0.15 else None
+    resume_vehicle_delay = resume_lead_move_age if resume_lead_move_age is not None and v_ego > 0.35 else None
+    resume_ramp_active = resume_lead_move_age is not None and resume_vehicle_delay is None and controlsd_accel > 0.15
+
+    if not self.CP.openpilotLongitudinalControl or not CC.longActive:
+      fscs_mode = "observe"
+    elif resume_candidate:
+      fscs_mode = "resume"
+    elif CS.standstill:
+      fscs_mode = "hold"
+    elif long_state == 2 and v_ego < 1.2:
+      fscs_mode = "touchdown"
+    elif glide_allowed:
+      fscs_mode = "glide"
+    elif soft_stop_candidate:
+      fscs_mode = "approach"
+    else:
+      fscs_mode = "observe"
+
+    guard_reasons = []
+    if human_override:
+      guard_reasons.append("human")
+    if lead_valid and not lead_stable:
+      guard_reasons.append("lead_unstable")
+    if cut_in_detected:
+      guard_reasons.append("cut_in")
+    if cut_out_detected:
+      guard_reasons.append("cut_out")
+    if gap_too_small:
+      guard_reasons.append("gap_too_small")
+    if v_ego >= 22.0:
+      guard_reasons.append("speed_too_high")
+    if source_transition_age < 1.0:
+      guard_reasons.append("source_transition")
+    if not guard_reasons:
+      guard_reasons.append("none")
+
+    desired_accel_raw = controlsd_accel
+    desired_accel_fscs = desired_accel_raw
+    accel_limit_reason = "none"
+    if cut_in_detected and desired_accel_raw > -1.0:
+      desired_accel_fscs = -1.0
+      accel_limit_reason = "cut_in_guard"
+    elif gap_too_small and desired_accel_raw > -0.8:
+      desired_accel_fscs = -0.8
+      accel_limit_reason = "gap_guard"
+    elif fscs_mode == "touchdown" and desired_accel_raw < -0.6:
+      desired_accel_fscs = -0.6
+      accel_limit_reason = "touchdown"
+    elif resume_ramp_active and desired_accel_raw > 0.6:
+      desired_accel_fscs = 0.6
+      accel_limit_reason = "resume_jerk"
+
+    self.ford_observe_prev_lead_valid = lead_valid
+    self.ford_observe_prev_d_rel = d_rel
+    self.ford_observe_prev_v_rel = v_rel
+
     cc_obj = self.CI.CC
     payload = {
-      "tag": "FORD_LONG_OBS_V2",
+      "tag": "FORD_LONG_OBS_V3",
       "opLong": bool(self.CP.openpilotLongitudinalControl),
       "longActive": bool(CC.longActive),
       "longState": long_state,
@@ -372,8 +516,10 @@ class Car:
       "brakePressed": bool(CS.brakePressed),
       "steeringPressed": bool(CS.steeringPressed),
       "plannerATarget": planner_a_target,
-      "controlsdAccel": float(getattr(CC.actuators, "accel", 0.0)),
-      "carOutputAccel": float(getattr(self.last_actuators_output, "accel", 0.0)),
+      "plannerShouldStop": planner_should_stop,
+      "plannerSource": planner_source,
+      "controlsdAccel": controlsd_accel,
+      "carOutputAccel": car_output_accel,
       "carOutputGas": float(getattr(self.last_actuators_output, "gas", 0.0)),
       "controllerAccel": float(getattr(cc_obj, "accel", 0.0)),
       "controllerGas": float(getattr(cc_obj, "gas", 0.0)),
@@ -381,9 +527,38 @@ class Car:
       "bpSpeedAllow": bool(getattr(cc_obj, "bpSpeedAllow", False)),
       "stopSmoothness": float(getattr(cc_obj, "bp_stop_smoothness", 0.0)),
       "fordStopTuning": bool(getattr(cc_obj, "ford_stop_tuning", False)),
+      "debug": {
+        "fscsEnabled": True,
+        "fscsMode": fscs_mode,
+        "fscsGuardReason": guard_reasons,
+        "stockAccGapLevel": None,
+        "stockTimeGapMeasured": stock_time_gap_measured,
+        "cityStopGapTarget": city_stop_gap_target,
+        "highSpeedTimeGapTarget": high_speed_time_gap_target,
+        "blendRatio": blend_ratio,
+        "targetGap": target_gap,
+        "gapError": gap_error,
+        "requiredStopDistance": required_stop_distance,
+        "stopDistanceMargin": stop_distance_margin,
+        "leadStable": lead_stable,
+        "leadStabilityAge": lead_stability_age,
+        "cutInDetected": cut_in_detected,
+        "cutOutDetected": cut_out_detected,
+        "sourceTransitionAge": source_transition_age,
+        "softStopCandidate": soft_stop_candidate,
+        "glideAllowed": glide_allowed,
+        "resumeCandidate": resume_candidate,
+        "resumeRampActive": resume_ramp_active,
+        "resumeLeadMoveAge": resume_lead_move_age,
+        "resumeCommandDelay": resume_command_delay,
+        "resumeVehicleDelay": resume_vehicle_delay,
+        "desiredAccelRaw": desired_accel_raw,
+        "desiredAccelFscs": desired_accel_fscs,
+        "accelLimitReason": accel_limit_reason,
+      },
       "radar": radar,
     }
-    cloudlog.info("FORD_LONG_OBS_V2 " + json.dumps(payload, separators=(",", ":")))
+    cloudlog.info("FORD_LONG_OBS_V3 " + json.dumps(payload, separators=(",", ":")))
 
   def step(self):
     CS, CS_SP, RD = self.state_update()

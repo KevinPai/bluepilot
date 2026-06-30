@@ -201,8 +201,20 @@ class CarState(CarStateBase, MadsCarState, CarStateExt):
 
     self.ford_stock_acc_observe_last_log_t = now
 
+    stock_gap_level = None
+    try:
+      stock_gap_level = int(cp_cam.vl["ACCDATA_3"]["AccTGap_D_Dsply"])
+    except (KeyError, AttributeError):
+      pass
+
+    stock_acc_active = bool((not self.CP.openpilotLongitudinalControl) and ret.cruiseState.enabled and not ret.cruiseState.nonAdaptive)
+    stock_gap_calibration_precheck = bool(
+      stock_acc_active and ret.vEgo > 8.0 and not ret.gasPressed and not ret.brakePressed and
+      stock_gap_level is not None and 1 <= stock_gap_level <= 4
+    )
+
     payload = {
-      "tag": "FORD_STOCK_ACC_OBS_V2",
+      "tag": "FORD_STOCK_ACC_OBS_V3",
       "opLong": bool(self.CP.openpilotLongitudinalControl),
       "vEgo": float(ret.vEgo),
       "aEgo": float(ret.aEgo),
@@ -211,10 +223,15 @@ class CarState(CarStateBase, MadsCarState, CarStateExt):
       "brakePressed": bool(ret.brakePressed),
       "cruiseEnabled": bool(ret.cruiseState.enabled),
       "cruiseAvailable": bool(ret.cruiseState.available),
+      "cruiseNonAdaptive": bool(ret.cruiseState.nonAdaptive),
       "cruiseStandstill": bool(ret.cruiseState.standstill),
       "distanceButton": int(self.distance_button),
+      "stockAccActive": stock_acc_active,
+      "stockAccGapLevel": stock_gap_level,
+      "stockGapCalibrationPrecheck": stock_gap_calibration_precheck,
       "engBrakeData": {},
       "accdata": {},
+      "accdata2": {},
       "accdata3": {},
     }
 
@@ -235,6 +252,8 @@ class CarState(CarStateBase, MadsCarState, CarStateExt):
         "brakeAccelReq": float(acc["AccBrkTot_A_Rq"]),
         "propulsionAccelReq": float(acc["AccPrpl_A_Rq"]),
         "propulsionAccelPred": float(acc["AccPrpl_A_Pred"]),
+        "accDenyReq": bool(acc.get("AccDeny_B_Rq", 0)),
+        "accCancelReq": bool(acc.get("AccCancl_B_Rq", 0)),
         "brakePrechargeReq": bool(acc["AccBrkPrchg_B_Rq"]),
         "brakeDecelReq": bool(acc["AccBrkDecel_B_Rq"]),
         "stopReq": bool(acc["AccStopStat_B_Rq"]),
@@ -246,18 +265,36 @@ class CarState(CarStateBase, MadsCarState, CarStateExt):
       pass
 
     try:
+      acc2 = cp_cam.vl["ACCDATA_2"]
+      payload["accdata2"] = {
+        "cmbbBrakeAccelReq": float(acc2.get("CmbbBrkDecel_A_Rq", 0.0)),
+        "cmbbBrakePrechargeReq": int(acc2.get("CmbbBrkPrchg_D_Rq", 0)),
+        "cmbbBrakeDecelReq": bool(acc2.get("CmbbBrkDecel_B_Rq", 0)),
+        "cmbbBrakeAssistSensitivity": int(acc2.get("CmbbBaSens_D_Rq", 0)),
+        "accBrakePulseReq": bool(acc2.get("AccBrkPulse_B_Rq", 0)),
+        "accAutoResumeReq": int(acc2.get("AccAutoResum_D_Rq", 0)),
+        "accParkBrakeReq": bool(acc2.get("AccBrkPrkEl_B_Rq", 0)),
+      }
+    except (KeyError, AttributeError):
+      pass
+
+    try:
       acc3 = cp_cam.vl["ACCDATA_3"]
       payload["accdata3"] = {
         "tGap": int(acc3["AccTGap_D_Dsply"]),
         "tGapDisplay": bool(acc3["AccTGap_B_Dsply"]),
         "targetDistanceDisplay": int(acc3["AccTrgDist2_D_Dsply"]),
         "followModeDisplay": bool(acc3["AccFllwMde_B_Dsply"]),
+        "stopStatusDisplay": int(acc3.get("AccStopStat_D_Dsply", 0)),
+        "stopResumeDisplay": bool(acc3.get("AccStopRes_B_Dsply", 0)),
+        "messageText": int(acc3.get("AccMsgTxt_D2_Rq", acc3.get("AccMsgTxt_D_Rq", 0))),
+        "fcwAudioWarn": bool(acc3.get("FcwAudioWarn_B_Rq", 0)),
         "fcwVisibleWarn": bool(acc3["FcwVisblWarn_B_Rq"]),
       }
     except (KeyError, AttributeError):
       pass
 
-    cloudlog.info("FORD_STOCK_ACC_OBS_V2 " + json.dumps(payload, separators=(",", ":")))
+    cloudlog.info("FORD_STOCK_ACC_OBS_V3 " + json.dumps(payload, separators=(",", ":")))
 
   def update_car_state_bp(self, cp, cp_cam):
     """Update the CarStateBP message for HEV/PHEV data
