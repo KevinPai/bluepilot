@@ -1,7 +1,11 @@
+import json
+import time
+
 from opendbc.can import CANDefine, CANParser
 from opendbc.car import Bus, create_button_events, structs
 from opendbc.car.common.conversions import Conversions as CV
 from openpilot.common.params import Params
+from openpilot.common.swaglog import cloudlog
 from opendbc.car.ford.fordcan import CanBus
 from opendbc.car.ford.values import DBC, CarControllerParams, FordFlags
 from opendbc.car.interfaces import CarStateBase
@@ -45,6 +49,7 @@ class CarState(CarStateBase, MadsCarState, CarStateExt):
     self.params.put_bool("FordPrefHevDataAvailable", True if CP.flags & FordFlags.HEV_CLUSTER_DATA else False)
     self.params.put_bool("FordPrefHevBattDataAvailable", True if CP.flags & FordFlags.HEV_BATTERY_DATA else False)
     self.hev_data_available = CP.flags & FordFlags.HEV_CLUSTER_DATA
+    self.ford_stock_acc_observe_last_log_t = 0.0
 
   def update(self, can_parsers) -> tuple[structs.CarState, structs.CarStateSP]:
     cp = can_parsers[Bus.pt]
@@ -181,7 +186,78 @@ class CarState(CarStateBase, MadsCarState, CarStateExt):
     ]
 
     self.car_state_bp_msg = self.update_car_state_bp(cp, cp_cam)
+    self.log_ford_stock_acc_observe(cp, cp_cam, ret)
     return ret, ret_sp
+
+  def log_ford_stock_acc_observe(self, cp, cp_cam, ret):
+    now = time.monotonic()
+    if now - self.ford_stock_acc_observe_last_log_t < 1.0:
+      return
+
+    low_speed = ret.vEgo < 22.0
+    should_log = low_speed or ret.cruiseState.enabled or ret.cruiseState.available or ret.gasPressed or ret.brakePressed
+    if not should_log:
+      return
+
+    self.ford_stock_acc_observe_last_log_t = now
+
+    payload = {
+      "tag": "FORD_STOCK_ACC_OBS_V2",
+      "opLong": bool(self.CP.openpilotLongitudinalControl),
+      "vEgo": float(ret.vEgo),
+      "aEgo": float(ret.aEgo),
+      "standstill": bool(ret.standstill),
+      "gasPressed": bool(ret.gasPressed),
+      "brakePressed": bool(ret.brakePressed),
+      "cruiseEnabled": bool(ret.cruiseState.enabled),
+      "cruiseAvailable": bool(ret.cruiseState.available),
+      "cruiseStandstill": bool(ret.cruiseState.standstill),
+      "distanceButton": int(self.distance_button),
+      "engBrakeData": {},
+      "accdata": {},
+      "accdata3": {},
+    }
+
+    try:
+      eng = cp.vl["EngBrakeData"]
+      payload["engBrakeData"] = {
+        "ccState": int(eng["CcStat_D_Actl"]),
+        "stopMode": int(eng["AccStopMde_D_Rq"]),
+        "setSpeedRaw": float(eng["Veh_V_DsplyCcSet"]),
+        "brakePedalState": int(eng["BpedDrvAppl_D_Actl"]),
+      }
+    except (KeyError, AttributeError):
+      pass
+
+    try:
+      acc = cp_cam.vl["ACCDATA"]
+      payload["accdata"] = {
+        "brakeAccelReq": float(acc["AccBrkTot_A_Rq"]),
+        "propulsionAccelReq": float(acc["AccPrpl_A_Rq"]),
+        "propulsionAccelPred": float(acc["AccPrpl_A_Pred"]),
+        "brakePrechargeReq": bool(acc["AccBrkPrchg_B_Rq"]),
+        "brakeDecelReq": bool(acc["AccBrkDecel_B_Rq"]),
+        "stopReq": bool(acc["AccStopStat_B_Rq"]),
+        "targetSpeedKph": float(acc["AccVeh_V_Trg"]),
+        "resumeEnabled": bool(acc["AccResumEnbl_B_Rq"]),
+        "cmbbDeny": bool(acc["CmbbDeny_B_Actl"]),
+      }
+    except (KeyError, AttributeError):
+      pass
+
+    try:
+      acc3 = cp_cam.vl["ACCDATA_3"]
+      payload["accdata3"] = {
+        "tGap": int(acc3["AccTGap_D_Dsply"]),
+        "tGapDisplay": bool(acc3["AccTGap_B_Dsply"]),
+        "targetDistanceDisplay": int(acc3["AccTrgDist2_D_Dsply"]),
+        "followModeDisplay": bool(acc3["AccFllwMde_B_Dsply"]),
+        "fcwVisibleWarn": bool(acc3["FcwVisblWarn_B_Rq"]),
+      }
+    except (KeyError, AttributeError):
+      pass
+
+    cloudlog.info("FORD_STOCK_ACC_OBS_V2 " + json.dumps(payload, separators=(",", ":")))
 
   def update_car_state_bp(self, cp, cp_cam):
     """Update the CarStateBP message for HEV/PHEV data

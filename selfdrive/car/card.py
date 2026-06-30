@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import json
 import os
 import time
 import threading
@@ -70,7 +71,7 @@ class Car:
 
   def __init__(self, CI=None, RI=None) -> None:
     self.can_sock = messaging.sub_sock('can', timeout=20)
-    self.sm = messaging.SubMaster(['pandaStates', 'carControl', 'onroadEvents'] + ['carControlSP', 'longitudinalPlanSP'])
+    self.sm = messaging.SubMaster(['pandaStates', 'carControl', 'onroadEvents', 'longitudinalPlan', 'radarState'] + ['carControlSP', 'longitudinalPlanSP'])
     self.pm = messaging.PubMaster(['sendcan', 'carState', 'carParams', 'carOutput', 'liveTracks'] + ['carParamsSP', 'carStateSP', 'controllerStateBP', 'carStateBP'])
 
     self.can_rcv_cum_timeout_counter = 0
@@ -81,6 +82,7 @@ class Car:
     self.initialized_prev = False
 
     self.last_actuators_output = structs.CarControl.Actuators()
+    self.ford_observe_last_log_t = 0.0
 
     self.params = Params()
 
@@ -290,6 +292,7 @@ class Car:
       self.pm.send('sendcan', can_list_to_can_capnp(can_sends, msgtype='sendcan', valid=CS.canValid))
 
       self.CC_prev = CC
+      self.log_ford_long_observe(CS, CC)
 
     if hasattr(self.CI.CC, "lateralUncertainty"):
       cs_bp = structs.ControllerStateBP()
@@ -300,6 +303,87 @@ class Car:
       cs_bp_send.controllerStateBP = cs_bp_capnp
       self.pm.send('controllerStateBP', cs_bp_send)
 
+  def log_ford_long_observe(self, CS: car.CarState, CC: car.CarControl):
+    if self.CP.brand != "ford":
+      return
+
+    now = time.monotonic()
+    if now - self.ford_observe_last_log_t < 0.5:
+      return
+
+    lead = None
+    if self.sm.valid.get('radarState', False):
+      lead = getattr(self.sm['radarState'], 'leadOne', None)
+      if lead is not None and getattr(lead, 'status', 0) != 1:
+        lead = None
+
+    low_speed = CS.vEgo < 22.0
+    should_log = low_speed or CC.longActive or CS.gasPressed or CS.brakePressed or lead is not None
+    if not should_log:
+      return
+
+    self.ford_observe_last_log_t = now
+
+    planner_a_target = 0.0
+    if self.sm.seen['longitudinalPlan']:
+      planner_a_target = float(getattr(self.sm['longitudinalPlan'], "aTarget", 0.0))
+
+    long_state = getattr(CC.actuators, "longControlState", 0)
+    try:
+      long_state = int(getattr(long_state, "raw", long_state))
+    except (TypeError, ValueError):
+      long_state = 0
+
+    radar = {
+      "valid": False,
+      "dRel": 0.0,
+      "vRel": 0.0,
+      "vLead": 0.0,
+      "aLeadK": 0.0,
+      "leadTime": 999.0,
+      "ttc": 120.0,
+    }
+    if lead is not None:
+      d_rel = float(getattr(lead, 'dRel', 0.0))
+      v_rel = float(getattr(lead, 'vRel', 0.0))
+      radar.update({
+        "valid": True,
+        "dRel": d_rel,
+        "vRel": v_rel,
+        "vLead": float(getattr(lead, 'vLead', 0.0)),
+        "aLeadK": float(getattr(lead, 'aLeadK', 0.0)),
+        "leadTime": d_rel / max(float(CS.vEgo), 0.5) if d_rel > 0.0 else 999.0,
+        "ttc": d_rel / (-v_rel) if d_rel > 0.0 and v_rel < 0.0 else 60.0,
+      })
+
+    cc_obj = self.CI.CC
+    payload = {
+      "tag": "FORD_LONG_OBS_V2",
+      "opLong": bool(self.CP.openpilotLongitudinalControl),
+      "longActive": bool(CC.longActive),
+      "longState": long_state,
+      "vEgo": float(CS.vEgo),
+      "aEgo": float(CS.aEgo),
+      "standstill": bool(CS.standstill),
+      "cruiseEnabled": bool(CS.cruiseState.enabled),
+      "cruiseAvailable": bool(CS.cruiseState.available),
+      "cruiseStandstill": bool(CS.cruiseState.standstill),
+      "gasPressed": bool(CS.gasPressed),
+      "brakePressed": bool(CS.brakePressed),
+      "steeringPressed": bool(CS.steeringPressed),
+      "plannerATarget": planner_a_target,
+      "controlsdAccel": float(getattr(CC.actuators, "accel", 0.0)),
+      "carOutputAccel": float(getattr(self.last_actuators_output, "accel", 0.0)),
+      "carOutputGas": float(getattr(self.last_actuators_output, "gas", 0.0)),
+      "controllerAccel": float(getattr(cc_obj, "accel", 0.0)),
+      "controllerGas": float(getattr(cc_obj, "gas", 0.0)),
+      "bpLongActiveLast": bool(getattr(cc_obj, "_bp_long_active_last", False)),
+      "bpSpeedAllow": bool(getattr(cc_obj, "bpSpeedAllow", False)),
+      "stopSmoothness": float(getattr(cc_obj, "bp_stop_smoothness", 0.0)),
+      "fordStopTuning": bool(getattr(cc_obj, "ford_stop_tuning", False)),
+      "radar": radar,
+    }
+    cloudlog.info("FORD_LONG_OBS_V2 " + json.dumps(payload, separators=(",", ":")))
 
   def step(self):
     CS, CS_SP, RD = self.state_update()
