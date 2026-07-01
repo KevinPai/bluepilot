@@ -466,6 +466,35 @@ struct CustomReserved12 @0x9ccdc8676701b412 {
 
 struct ControllerStateBP @0xcd96dafb67a082d0 {
   lateralUncertainty @0 :Float32;  # BluePilot: lateral uncertainty for angleState (e.g. torque bar)
+  stockGoLeadMoved @1 :Bool;
+  stockGoLeadStable @2 :Bool;
+  stockGoLeadStableAge @3 :Float32;
+  stockGoTimeSinceLeadMove @4 :Float32;
+  stockGoEgoLag @5 :Float32;
+  stockGoCandidate @6 :Bool;
+  stockGoBlockedReason @7 :Text;
+  stockGoDesiredAccel @8 :Float32;
+  stockGoJerkLimitedAccel @9 :Float32;
+  stockGoReleasePhase @10 :Text;
+  stockGoControlEnabled @11 :Bool;
+  softCrawlObserveEnabled @12 :Bool;
+  softCrawlControlEnabled @13 :Bool;
+  softCrawlAvailable @14 :Bool;
+  softCrawlReason @15 :Text;
+  softCrawlFallbackReason @16 :Text;
+  softCrawlTargetAccel @17 :Float32;
+  softCrawlDistanceToStop @18 :Float32;
+  softCrawlNeededDistance @19 :Float32;
+  softCrawlDistanceMargin @20 :Float32;
+  softCrawlCurrentStopDistance @21 :Float32;
+  softCrawlLeadDRel @22 :Float32;
+  softCrawlLeadVRel @23 :Float32;
+  softCrawlLeadVLead @24 :Float32;
+  softCrawlTtc @25 :Float32;
+  softCrawlVEgo @26 :Float32;
+  softCrawlOriginalAccel @27 :Float32;
+  softCrawlPlannerStopping @28 :Bool;
+  softCrawlControlActive @29 :Bool;
 }
 
 struct CarStateBP @0xb057204d7deadf3f {

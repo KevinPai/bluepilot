@@ -137,6 +137,75 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
     self.precharge_actuate_release = -0.06 # at what accel value do we release precharge
     self.op_brake_actuate_last = False # init the value for our hysteresis
     self.disable_downhill_comp_UI = True #flag to disable downhill pitch compensation
+    self.ford_stock_acc_stop_go_v12 = False
+    self.ford_v12_resume_lead_move_t = 0.0
+    self.ford_v12_hold_accel = -0.45
+    self.ford_v12_touchdown_accel_bp = [0.0, 1.2]
+    self.ford_v12_touchdown_accel_v = [self.ford_v12_hold_accel, -0.75]
+    self.ford_v12_phase = "disabled"
+    self.ford_v12_reason = "init"
+    self.ford_v12_last_stop_request = False
+    self.ford_v12_last_resume_enable = False
+    self.ford_v12_last_target_speed = V_CRUISE_MAX
+    self.ford_v12_last_accel = 0.0
+    self.ford_v12_last_gas = CarControllerParams.INACTIVE_GAS
+    self.ford_v12_last_brake_actuate = False
+    self.ford_v12_last_precharge_actuate = False
+    self.ford_v12_last_original_accel = 0.0
+    self.ford_v12_last_original_gas = CarControllerParams.INACTIVE_GAS
+    self.ford_v12_last_original_brake_actuate = False
+    self.ford_v12_last_original_precharge_actuate = False
+    self.ford_v12_last_lead_d_rel = 0.0
+    self.ford_v12_last_lead_v_rel = 0.0
+    self.ford_v12_last_lead_v_lead = 0.0
+    self.ford_v12_last_ttc = 120.0
+    self.ford_v12_last_resume_age = 0.0
+    self.ford_v12_last_hold_accel = self.ford_v12_hold_accel
+    self.ford_v12_last_touchdown_floor = self.ford_v12_hold_accel
+    self.ford_v13_prev_lead_valid = False
+    self.ford_v13_prev_d_rel = 0.0
+    self.ford_v13_prev_v_rel = 0.0
+    self.ford_v13_lead_stable_since = 0.0
+    self.ford_v13_lead_lost_since = 0.0
+    self.ford_v13_last_lead_stable = False
+    self.ford_v13_last_lead_stability_age = 0.0
+    self.ford_v13_last_lead_dropout_age = 0.0
+    self.ford_v13_last_cut_in = False
+    self.ford_v13_last_cut_out = False
+    self.ford_v13_last_gate_reason = "init"
+    self.ford_stock_acc_go_release_v14 = False
+    self.ford_v14_lead_move_t = 0.0
+    self.ford_v14_prev_t = 0.0
+    self.ford_v14_prev_jerk_limited_accel = 0.0
+    self.ford_v14_last_lead_moved = False
+    self.ford_v14_last_lead_stable = False
+    self.ford_v14_last_lead_stable_age = 0.0
+    self.ford_v14_last_time_since_lead_move = 0.0
+    self.ford_v14_last_ego_lag = 0.0
+    self.ford_v14_last_candidate = False
+    self.ford_v14_last_blocked_reason = "init"
+    self.ford_v14_last_desired_accel = 0.0
+    self.ford_v14_last_jerk_limited_accel = 0.0
+    self.ford_v14_last_release_phase = "init"
+    self.ford_v14_last_control_enabled = False
+    self.ford_stock_acc_soft_crawl_observe = True
+    self.ford_stock_acc_soft_crawl_control = False
+    self.ford_soft_crawl_last_available = False
+    self.ford_soft_crawl_last_reason = "init"
+    self.ford_soft_crawl_last_fallback_reason = "init"
+    self.ford_soft_crawl_last_target_accel = 0.0
+    self.ford_soft_crawl_last_distance_to_stop = 0.0
+    self.ford_soft_crawl_last_needed_distance = 0.0
+    self.ford_soft_crawl_last_distance_margin = 0.0
+    self.ford_soft_crawl_last_current_stop_distance = 0.0
+    self.ford_soft_crawl_last_lead_d_rel = 0.0
+    self.ford_soft_crawl_last_lead_v_rel = 0.0
+    self.ford_soft_crawl_last_lead_v_lead = 0.0
+    self.ford_soft_crawl_last_ttc = 120.0
+    self.ford_soft_crawl_last_v_ego = 0.0
+    self.ford_soft_crawl_last_original_accel = 0.0
+    self.ford_soft_crawl_last_planner_stopping = False
+    self.ford_soft_crawl_last_control_active = False
 
     # # Curvature variables
     self.curvature_lookup_time = 0.42 # from lagd (how far into the future we pull curvature)
@@ -250,6 +319,375 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
     # Ford long: bypass BP longitudinal toggle (gas/accel ROC use __init__ defaults only)
     self.disable_BP_long_UI = self.params.get_bool("disable_BP_long_UI")
     self.disable_downhill_comp_UI = self.params.get_bool("disable_downhill_comp_UI")
+    self.ford_stock_acc_stop_go_v12 = self.params.get_bool("FordStockAccStopGoV12")
+    self.ford_stock_acc_go_release_v14 = self.params.get_bool("FordStockAccGoReleaseV14")
+    self.ford_stock_acc_soft_crawl_observe = bool(self.params.get("FordStockAccSoftCrawlObserve", return_default=True))
+    self.ford_stock_acc_soft_crawl_control = bool(self.params.get("FordStockAccSoftCrawlControl", return_default=True))
+
+  def _ford_stock_acc_lead(self, v_ego):
+    lead = None
+    if self.sm.valid.get('radarState', False):
+      rs = self.sm['radarState']
+      lead = getattr(rs, 'leadOne', None)
+      if lead is not None and getattr(lead, 'status', 0) != 1:
+        lead = None
+
+    d_rel = float(getattr(lead, 'dRel', 0.0)) if lead is not None else 0.0
+    v_rel = float(getattr(lead, 'vRel', 0.0)) if lead is not None else 0.0
+    v_lead = float(getattr(lead, 'vLead', 0.0)) if lead is not None else 0.0
+    lead_valid = lead is not None and d_rel > 0.0
+    lead_time = d_rel / max(v_ego, 0.5) if lead_valid else 999.0
+    ttc = d_rel / (-v_rel) if lead_valid and v_rel < -0.05 else 60.0
+    return lead_valid, d_rel, v_rel, v_lead, float(clip(lead_time, 0.0, 999.0)), float(clip(ttc, 0.2, 120.0))
+
+  def _ford_stock_acc_lead_gate_v13(self, lead_data, now):
+    lead_valid, d_rel, v_rel, _, _, _ = lead_data
+    prev_valid = self.ford_v13_prev_lead_valid
+    prev_d_rel = self.ford_v13_prev_d_rel
+
+    cut_in = False
+    cut_out = False
+    if lead_valid and prev_valid:
+      cut_in = d_rel < prev_d_rel - max(4.0, 0.18 * max(prev_d_rel, 1.0)) or (v_rel < -4.0 and d_rel < 25.0)
+      cut_out = d_rel > prev_d_rel + max(6.0, 0.25 * max(prev_d_rel, 1.0))
+    elif prev_valid and not lead_valid:
+      cut_out = True
+
+    if lead_valid:
+      self.ford_v13_lead_lost_since = 0.0
+      if not prev_valid or cut_in or cut_out or self.ford_v13_lead_stable_since <= 0.0:
+        self.ford_v13_lead_stable_since = now
+    else:
+      if prev_valid or self.ford_v13_lead_lost_since <= 0.0:
+        self.ford_v13_lead_lost_since = now
+      self.ford_v13_lead_stable_since = 0.0
+
+    lead_stability_age = now - self.ford_v13_lead_stable_since if self.ford_v13_lead_stable_since > 0.0 else 0.0
+    lead_dropout_age = now - self.ford_v13_lead_lost_since if self.ford_v13_lead_lost_since > 0.0 else 0.0
+    lead_stable = bool(lead_valid and lead_stability_age >= 0.5 and abs(v_rel) < 6.0 and not cut_in and not cut_out)
+
+    if not lead_valid:
+      gate_reason = "lead_missing"
+    elif cut_in:
+      gate_reason = "cut_in"
+    elif cut_out:
+      gate_reason = "cut_out"
+    elif lead_stability_age < 0.5:
+      gate_reason = "lead_warmup"
+    elif abs(v_rel) >= 6.0:
+      gate_reason = "vrel_jump"
+    else:
+      gate_reason = "stable"
+
+    self.ford_v13_prev_lead_valid = bool(lead_valid)
+    self.ford_v13_prev_d_rel = float(d_rel)
+    self.ford_v13_prev_v_rel = float(v_rel)
+    self.ford_v13_last_lead_stable = lead_stable
+    self.ford_v13_last_lead_stability_age = float(lead_stability_age)
+    self.ford_v13_last_lead_dropout_age = float(lead_dropout_age)
+    self.ford_v13_last_cut_in = bool(cut_in)
+    self.ford_v13_last_cut_out = bool(cut_out)
+    self.ford_v13_last_gate_reason = gate_reason
+
+    return lead_stable, lead_stability_age, lead_dropout_age, cut_in, cut_out, gate_reason
+
+  def _ford_stock_acc_go_release_v14(self, CC, CS, lead_data, lead_stable, lead_stability_age,
+                                     gate_reason, standstill, human_override, stopping, now, current_accel):
+    lead_valid, d_rel, v_rel, v_lead, _, ttc = lead_data
+    v_ego = max(float(CS.out.vEgo), 0.0)
+    lead_moved = bool(lead_valid and lead_stable and (v_lead > 0.35 or v_rel > 0.35))
+
+    if lead_moved and self.ford_v14_lead_move_t <= 0.0:
+      self.ford_v14_lead_move_t = now
+    elif not standstill or human_override or not lead_valid:
+      self.ford_v14_lead_move_t = 0.0
+
+    time_since_lead_move = now - self.ford_v14_lead_move_t if self.ford_v14_lead_move_t > 0.0 else 0.0
+    ego_lag = time_since_lead_move if time_since_lead_move > 0.0 and v_ego < 0.28 else 0.0
+
+    blocked_reason = "none"
+    if not CC.longActive:
+      blocked_reason = "long_inactive"
+    elif human_override:
+      blocked_reason = "human_override"
+    elif not standstill:
+      blocked_reason = "not_standstill"
+    elif not lead_valid:
+      blocked_reason = "lead_missing"
+    elif not lead_stable:
+      blocked_reason = f"lead_gate_{gate_reason}"
+    elif not lead_moved:
+      blocked_reason = "lead_not_moving"
+    elif stopping:
+      blocked_reason = "planner_stopping"
+    elif d_rel < 2.5:
+      blocked_reason = "lead_too_close"
+    elif ttc < 1.5:
+      blocked_reason = "short_ttc"
+
+    candidate = blocked_reason == "none"
+    if candidate:
+      if v_ego > 0.83:
+        release_phase = "handoff"
+      elif time_since_lead_move < 0.25:
+        release_phase = "warmup"
+      elif time_since_lead_move < 1.5:
+        release_phase = "ramp"
+      else:
+        release_phase = "assertive"
+    else:
+      release_phase = "blocked"
+
+    desired_accel = 0.0
+    if candidate:
+      desired_accel = float(interp(time_since_lead_move, [0.0, 0.5, 1.5, 2.0], [0.8, 1.0, 1.6, 1.7]))
+
+    dt = now - self.ford_v14_prev_t if self.ford_v14_prev_t > 0.0 else DT_CTRL
+    dt = float(clip(dt, DT_CTRL, 0.2))
+    jerk_limit = 1.8
+    if candidate:
+      start_accel = self.ford_v14_prev_jerk_limited_accel if self.ford_v14_prev_t > 0.0 else max(current_accel, 0.0)
+      jerk_limited_accel = float(clip(desired_accel, start_accel - jerk_limit * dt, start_accel + jerk_limit * dt))
+    else:
+      jerk_limited_accel = desired_accel
+
+    self.ford_v14_prev_t = now
+    self.ford_v14_prev_jerk_limited_accel = jerk_limited_accel if candidate else 0.0
+    self.ford_v14_last_lead_moved = lead_moved
+    self.ford_v14_last_lead_stable = lead_stable
+    self.ford_v14_last_lead_stable_age = float(lead_stability_age)
+    self.ford_v14_last_time_since_lead_move = float(time_since_lead_move)
+    self.ford_v14_last_ego_lag = float(ego_lag)
+    self.ford_v14_last_candidate = candidate
+    self.ford_v14_last_blocked_reason = blocked_reason
+    self.ford_v14_last_desired_accel = float(desired_accel)
+    self.ford_v14_last_jerk_limited_accel = float(jerk_limited_accel)
+    self.ford_v14_last_release_phase = release_phase
+    self.ford_v14_last_control_enabled = bool(self.ford_stock_acc_go_release_v14 and candidate and release_phase != "warmup")
+
+    return candidate, release_phase, jerk_limited_accel
+
+  def _ford_stock_acc_soft_crawl_observe_v1(self, CC, CS, lead_data, lead_stable, lead_stability_age,
+                                            cut_in, cut_out, stopping, original_accel):
+    lead_valid, d_rel, v_rel, v_lead, lead_time, ttc = lead_data
+    v_ego = max(float(CS.out.vEgo), 0.0)
+    human_override = bool(CS.out.gasPressed or CS.out.brakePressed)
+    standstill = bool(CS.out.standstill or CS.out.cruiseState.standstill or v_ego < 0.05)
+    original_accel = float(original_accel)
+
+    # Estimate a stock-like crawl: gentle decel at very low speed, stronger only as speed rises.
+    soft_decel = float(interp(v_ego, [0.0, 1.0, 3.0, 6.0, 8.0], [0.20, 0.28, 0.42, 0.62, 0.78]))
+    soft_decel = max(soft_decel, 0.20)
+    stop_gap_target = float(interp(v_ego, [0.0, 2.0, 6.0, 12.0], [3.2, 3.8, 5.5, 9.0]))
+    needed_distance = (v_ego * v_ego) / (2.0 * soft_decel) + stop_gap_target
+
+    current_decel = max(-original_accel, 0.25)
+    current_stop_distance = (v_ego * v_ego) / (2.0 * current_decel) + stop_gap_target
+    distance_to_stop = max(d_rel - stop_gap_target, 0.0) if lead_valid else 0.0
+    distance_margin = d_rel - needed_distance if lead_valid else 0.0
+    target_accel = -soft_decel
+
+    approach_context = bool(stopping or (lead_valid and d_rel < 35.0 and v_rel < 0.15 and v_ego < 8.0))
+    fallback_reason = "none"
+    if not self.ford_stock_acc_soft_crawl_observe:
+      fallback_reason = "observe_disabled"
+    elif not CC.longActive:
+      fallback_reason = "long_inactive"
+    elif human_override:
+      fallback_reason = "human_override"
+    elif standstill:
+      fallback_reason = "standstill"
+    elif v_ego > 8.0:
+      fallback_reason = "speed_too_high"
+    elif not lead_valid:
+      fallback_reason = "lead_missing"
+    elif not lead_stable:
+      fallback_reason = "lead_unstable"
+    elif lead_stability_age < 0.6:
+      fallback_reason = "lead_warmup"
+    elif cut_in:
+      fallback_reason = "lead_cut_in"
+    elif cut_out:
+      fallback_reason = "lead_cut_out"
+    elif not approach_context:
+      fallback_reason = "not_approach_context"
+    elif v_rel > 0.35 and not stopping:
+      fallback_reason = "lead_pulling_away"
+    elif ttc < 2.2:
+      fallback_reason = "short_ttc"
+    elif lead_time < 0.7:
+      fallback_reason = "short_lead_time"
+    elif distance_margin < 1.0:
+      fallback_reason = "insufficient_distance"
+    elif target_accel > original_accel + 0.75:
+      fallback_reason = "release_delta_too_large"
+
+    available = fallback_reason == "none"
+    if available:
+      reason = "soft_crawl_available"
+    elif fallback_reason in ("observe_disabled", "long_inactive", "human_override", "standstill"):
+      reason = "not_evaluating"
+    else:
+      reason = "fallback"
+
+    self.ford_soft_crawl_last_available = bool(available)
+    self.ford_soft_crawl_last_reason = reason
+    self.ford_soft_crawl_last_fallback_reason = fallback_reason
+    self.ford_soft_crawl_last_target_accel = float(target_accel)
+    self.ford_soft_crawl_last_distance_to_stop = float(distance_to_stop)
+    self.ford_soft_crawl_last_needed_distance = float(needed_distance)
+    self.ford_soft_crawl_last_distance_margin = float(distance_margin)
+    self.ford_soft_crawl_last_current_stop_distance = float(current_stop_distance)
+    self.ford_soft_crawl_last_lead_d_rel = float(d_rel)
+    self.ford_soft_crawl_last_lead_v_rel = float(v_rel)
+    self.ford_soft_crawl_last_lead_v_lead = float(v_lead)
+    self.ford_soft_crawl_last_ttc = float(ttc)
+    self.ford_soft_crawl_last_v_ego = float(v_ego)
+    self.ford_soft_crawl_last_original_accel = float(original_accel)
+    self.ford_soft_crawl_last_planner_stopping = bool(stopping)
+    # v1 is observe-only; keep this false until a later control version explicitly consumes it.
+    self.ford_soft_crawl_last_control_active = False
+
+    return available
+
+  def _record_ford_stock_acc_v12(self, phase, reason, accel, gas, brake_actuate, precharge_actuate,
+                                 stop_request, resume_enable, target_speed, original_accel, original_gas,
+                                 original_brake_actuate, original_precharge_actuate, lead_data, resume_age,
+                                 touchdown_floor=None):
+    lead_valid, d_rel, v_rel, v_lead, _, ttc = lead_data
+    self.ford_v12_phase = phase
+    self.ford_v12_reason = reason
+    self.ford_v12_last_stop_request = bool(stop_request)
+    self.ford_v12_last_resume_enable = bool(resume_enable)
+    self.ford_v12_last_target_speed = float(target_speed)
+    self.ford_v12_last_accel = float(accel)
+    self.ford_v12_last_gas = float(gas)
+    self.ford_v12_last_brake_actuate = bool(brake_actuate)
+    self.ford_v12_last_precharge_actuate = bool(precharge_actuate)
+    self.ford_v12_last_original_accel = float(original_accel)
+    self.ford_v12_last_original_gas = float(original_gas)
+    self.ford_v12_last_original_brake_actuate = bool(original_brake_actuate)
+    self.ford_v12_last_original_precharge_actuate = bool(original_precharge_actuate)
+    self.ford_v12_last_lead_valid = bool(lead_valid)
+    self.ford_v12_last_lead_d_rel = float(d_rel)
+    self.ford_v12_last_lead_v_rel = float(v_rel)
+    self.ford_v12_last_lead_v_lead = float(v_lead)
+    self.ford_v12_last_ttc = float(ttc)
+    self.ford_v12_last_resume_age = float(resume_age or 0.0)
+    self.ford_v12_last_hold_accel = float(self.ford_v12_hold_accel)
+    self.ford_v12_last_touchdown_floor = float(touchdown_floor if touchdown_floor is not None else self.ford_v12_hold_accel)
+
+  def _apply_ford_stock_acc_stop_go_v12(self, CC, CS, accel, gas, brake_actuate, precharge_actuate,
+                                        stopping, target_speed, now_nanos):
+    original_accel = accel
+    original_gas = gas
+    original_brake_actuate = brake_actuate
+    original_precharge_actuate = precharge_actuate
+    stop_request = bool(stopping)
+    resume_enable = bool(CC.longActive)
+    v_ego = max(float(CS.out.vEgo), 0.0)
+    now = float(now_nanos) * 1e-9
+    standstill = bool(CS.out.standstill or CS.out.cruiseState.standstill or v_ego < 0.05)
+    human_override = bool(CS.out.gasPressed or CS.out.brakePressed)
+    lead_data = self._ford_stock_acc_lead(v_ego)
+    lead_valid, d_rel, v_rel, v_lead, lead_time, ttc = lead_data
+    lead_stable, lead_stability_age, _, cut_in, cut_out, gate_reason = self._ford_stock_acc_lead_gate_v13(lead_data, now)
+    go_candidate, go_release_phase, go_accel = self._ford_stock_acc_go_release_v14(
+      CC, CS, lead_data, lead_stable, lead_stability_age, gate_reason, standstill, human_override, stopping, now, accel
+    )
+    self._ford_stock_acc_soft_crawl_observe_v1(
+      CC, CS, lead_data, lead_stable, lead_stability_age, cut_in, cut_out, stopping, original_accel
+    )
+    resume_age = 0.0
+
+    phase = "pass_through"
+    reason = "disabled"
+    if not self.ford_stock_acc_stop_go_v12:
+      self.ford_v12_resume_lead_move_t = 0.0
+      self._record_ford_stock_acc_v12(phase, reason, accel, gas, brake_actuate, precharge_actuate,
+                                      stop_request, resume_enable, target_speed, original_accel, original_gas,
+                                      original_brake_actuate, original_precharge_actuate, lead_data, resume_age)
+      return accel, gas, brake_actuate, precharge_actuate, stop_request, resume_enable, target_speed
+
+    if not CC.longActive:
+      self.ford_v12_resume_lead_move_t = 0.0
+      phase = "inactive"
+      reason = "long_inactive"
+    elif human_override:
+      self.ford_v12_resume_lead_move_t = 0.0
+      phase = "pass_through"
+      reason = "human_override"
+    elif v_ego > 12.0 and not stopping:
+      self.ford_v12_resume_lead_move_t = 0.0
+      phase = "pass_through"
+      reason = "speed_too_high"
+    elif lead_valid and ttc < 1.2:
+      phase = "guard"
+      reason = "short_ttc"
+    elif cut_in:
+      phase = "guard"
+      reason = "lead_cut_in"
+    else:
+      low_speed_context = v_ego < 8.0 or stopping or standstill or (lead_valid and d_rel < 35.0)
+      if not low_speed_context:
+        self.ford_v12_resume_lead_move_t = 0.0
+        phase = "pass_through"
+        reason = "not_low_speed"
+      else:
+        resume_candidate = bool(standstill and lead_stable and (v_lead > 0.35 or v_rel > 0.35))
+        if resume_candidate and self.ford_v12_resume_lead_move_t <= 0.0:
+          self.ford_v12_resume_lead_move_t = now
+        elif not resume_candidate:
+          self.ford_v12_resume_lead_move_t = 0.0
+        resume_age = now - self.ford_v12_resume_lead_move_t if self.ford_v12_resume_lead_move_t > 0.0 else 0.0
+
+        if standstill:
+          if resume_candidate and resume_age >= 0.25 and not stopping:
+            phase = "resume_release"
+            reason = "lead_moving"
+            if self.ford_stock_acc_go_release_v14 and go_candidate and go_release_phase != "warmup":
+              phase = "go_release"
+              reason = f"stock_like_go_{go_release_phase}"
+              stop_request = False
+              resume_enable = bool(CC.longActive)
+              brake_actuate = False
+              precharge_actuate = False
+              accel = max(accel, 0.0)
+              gas = max(gas, go_accel)
+          else:
+            phase = "hold"
+            reason = "standstill_wait"
+            stop_request = True
+            resume_enable = bool(CC.longActive)
+            accel = self.ford_v12_hold_accel
+        elif stopping:
+          phase = "touchdown"
+          reason = "touchdown_taper_check" if lead_stable else f"touchdown_lead_gate_{gate_reason}"
+          if lead_stable and d_rel > 2.5 and lead_time > 0.6 and ttc > 2.0 and v_ego < 1.2:
+            accel_floor = float(interp(v_ego, self.ford_v12_touchdown_accel_bp, self.ford_v12_touchdown_accel_v))
+            if accel < accel_floor:
+              accel = accel_floor
+              reason = "touchdown_taper"
+        elif brake_actuate or precharge_actuate:
+          phase = "approach_brake"
+          reason = "baseline_resume_target"
+        else:
+          phase = "approach"
+          reason = "baseline_resume_target"
+
+    if brake_actuate:
+      gas = CarControllerParams.INACTIVE_GAS
+
+    accel = float(clip(accel, CarControllerParams.ACCEL_MIN, CarControllerParams.ACCEL_MAX))
+    if gas != CarControllerParams.INACTIVE_GAS:
+      gas = float(clip(gas, CarControllerParams.MIN_GAS, CarControllerParams.ACCEL_MAX))
+    target_speed = float(clip(target_speed, 0.0, V_CRUISE_MAX))
+
+    self._record_ford_stock_acc_v12(phase, reason, accel, gas, brake_actuate, precharge_actuate,
+                                    stop_request, resume_enable, target_speed, original_accel, original_gas,
+                                    original_brake_actuate, original_precharge_actuate, lead_data, resume_age,
+                                    locals().get("accel_floor"))
+    return accel, gas, brake_actuate, precharge_actuate, stop_request, resume_enable, target_speed
 
   def handle_post_lane_change_transition(self, path_angle, path_offset, desired_curvature_rate):
     """
@@ -917,10 +1355,16 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
       if gas != CarControllerParams.INACTIVE_GAS:
         gas = float(clip(gas, CarControllerParams.MIN_GAS, CarControllerParams.ACCEL_MAX))
       accel_pred_send = CarControllerParams.INACTIVE_GAS
+      stop_request = stopping
+      resume_enable = CC.longActive
+
+      accel, gas, brake_actuate, precharge_actuate, stop_request, resume_enable, target_speed = self._apply_ford_stock_acc_stop_go_v12(
+        CC, CS, accel, gas, brake_actuate, precharge_actuate, stopping, target_speed, now_nanos
+      )
 
       can_sends.append(fordcan.create_acc_msg(
-        self.packer, self.CAN, CC.longActive, gas, accel, accel_pred_send, stopping,
-        brake_actuate, precharge_actuate, v_ego_kph=target_speed
+        self.packer, self.CAN, CC.longActive, gas, accel, accel_pred_send, stop_request,
+        brake_actuate, precharge_actuate, v_ego_kph=target_speed, resume_enable=resume_enable
       ))
 
       self.accel = accel

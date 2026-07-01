@@ -176,3 +176,32 @@ class CarStateSP:
 @auto_dataclass
 class ControllerStateBP:
   lateralUncertainty: float = 0.0
+  stockGoLeadMoved: bool = False
+  stockGoLeadStable: bool = False
+  stockGoLeadStableAge: float = 0.0
+  stockGoTimeSinceLeadMove: float = 0.0
+  stockGoEgoLag: float = 0.0
+  stockGoCandidate: bool = False
+  stockGoBlockedReason: str = ""
+  stockGoDesiredAccel: float = 0.0
+  stockGoJerkLimitedAccel: float = 0.0
+  stockGoReleasePhase: str = ""
+  stockGoControlEnabled: bool = False
+  softCrawlObserveEnabled: bool = False
+  softCrawlControlEnabled: bool = False
+  softCrawlAvailable: bool = False
+  softCrawlReason: str = ""
+  softCrawlFallbackReason: str = ""
+  softCrawlTargetAccel: float = 0.0
+  softCrawlDistanceToStop: float = 0.0
+  softCrawlNeededDistance: float = 0.0
+  softCrawlDistanceMargin: float = 0.0
+  softCrawlCurrentStopDistance: float = 0.0
+  softCrawlLeadDRel: float = 0.0
+  softCrawlLeadVRel: float = 0.0
+  softCrawlLeadVLead: float = 0.0
+  softCrawlTtc: float = 0.0
+  softCrawlVEgo: float = 0.0
+  softCrawlOriginalAccel: float = 0.0
+  softCrawlPlannerStopping: bool = False
+  softCrawlControlActive: bool = False
