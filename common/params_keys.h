@@ -294,6 +294,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"FordStockAccGoReleaseV14", {PERSISTENT | BACKUP, BOOL, "0"}},
     {"FordStockAccSoftCrawlObserve", {PERSISTENT | BACKUP, BOOL, "1"}},
     {"FordStockAccSoftCrawlControl", {PERSISTENT | BACKUP, BOOL, "0"}},
+    {"FordStockAccSoftCrawlV16", {PERSISTENT | BACKUP, BOOL, "0"}},
     {"vbatt_pause_charging", {PERSISTENT | BACKUP, FLOAT, "11.8"}},
     {"show_lead_speed", {PERSISTENT | BACKUP, BOOL, "1"}},
     {"FordPrefShowRadarLeadOverlay", {PERSISTENT | BACKUP, BOOL, "1"}},

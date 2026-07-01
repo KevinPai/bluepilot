@@ -205,3 +205,9 @@ class ControllerStateBP:
   softCrawlOriginalAccel: float = 0.0
   softCrawlPlannerStopping: bool = False
   softCrawlControlActive: bool = False
+  softCrawlPhase: str = ""
+  softCrawlStopGapTarget: float = 0.0
+  softCrawlRawTargetAccel: float = 0.0
+  softCrawlJerkLimitedAccel: float = 0.0
+  softCrawlAccelAfterControl: float = 0.0
+  softCrawlV16Enabled: bool = False

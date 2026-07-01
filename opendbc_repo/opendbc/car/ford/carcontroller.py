@@ -190,10 +190,16 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
     self.ford_v14_last_control_enabled = False
     self.ford_stock_acc_soft_crawl_observe = True
     self.ford_stock_acc_soft_crawl_control = False
+    self.ford_stock_acc_soft_crawl_v16 = False
     self.ford_soft_crawl_last_available = False
     self.ford_soft_crawl_last_reason = "init"
     self.ford_soft_crawl_last_fallback_reason = "init"
+    self.ford_soft_crawl_last_phase = "init"
     self.ford_soft_crawl_last_target_accel = 0.0
+    self.ford_soft_crawl_last_raw_target_accel = 0.0
+    self.ford_soft_crawl_last_jerk_limited_accel = 0.0
+    self.ford_soft_crawl_last_accel_after_control = 0.0
+    self.ford_soft_crawl_last_stop_gap_target = 0.0
     self.ford_soft_crawl_last_distance_to_stop = 0.0
     self.ford_soft_crawl_last_needed_distance = 0.0
     self.ford_soft_crawl_last_distance_margin = 0.0
@@ -206,6 +212,8 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
     self.ford_soft_crawl_last_original_accel = 0.0
     self.ford_soft_crawl_last_planner_stopping = False
     self.ford_soft_crawl_last_control_active = False
+    self.ford_soft_crawl_prev_t = 0.0
+    self.ford_soft_crawl_prev_accel = 0.0
 
     # # Curvature variables
     self.curvature_lookup_time = 0.42 # from lagd (how far into the future we pull curvature)
@@ -323,6 +331,7 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
     self.ford_stock_acc_go_release_v14 = self.params.get_bool("FordStockAccGoReleaseV14")
     self.ford_stock_acc_soft_crawl_observe = bool(self.params.get("FordStockAccSoftCrawlObserve", return_default=True))
     self.ford_stock_acc_soft_crawl_control = bool(self.params.get("FordStockAccSoftCrawlControl", return_default=True))
+    self.ford_stock_acc_soft_crawl_v16 = bool(self.params.get("FordStockAccSoftCrawlV16", return_default=True))
 
   def _ford_stock_acc_lead(self, v_ego):
     lead = None
@@ -468,26 +477,38 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
     return candidate, release_phase, jerk_limited_accel
 
   def _ford_stock_acc_soft_crawl_observe_v1(self, CC, CS, lead_data, lead_stable, lead_stability_age,
-                                            cut_in, cut_out, stopping, original_accel):
+                                            cut_in, cut_out, stopping, original_accel, now):
     lead_valid, d_rel, v_rel, v_lead, lead_time, ttc = lead_data
     v_ego = max(float(CS.out.vEgo), 0.0)
     human_override = bool(CS.out.gasPressed or CS.out.brakePressed)
     standstill = bool(CS.out.standstill or CS.out.cruiseState.standstill or v_ego < 0.05)
     original_accel = float(original_accel)
 
-    # Estimate a stock-like crawl: gentle decel at very low speed, stronger only as speed rises.
-    soft_decel = float(interp(v_ego, [0.0, 1.0, 3.0, 6.0, 8.0], [0.20, 0.28, 0.42, 0.62, 0.78]))
-    soft_decel = max(soft_decel, 0.20)
-    stop_gap_target = float(interp(v_ego, [0.0, 2.0, 6.0, 12.0], [3.2, 3.8, 5.5, 9.0]))
-    needed_distance = (v_ego * v_ego) / (2.0 * soft_decel) + stop_gap_target
+    # v1.6 has two stock-like stop phases:
+    # - early_soften: start reducing OP's heavier braking while there is still room to recover.
+    # - final_crawl: very low-speed glide toward the stock stop gap.
+    early_decel = float(interp(v_ego, [0.0, 1.0, 3.0, 6.0, 8.0], [0.24, 0.34, 0.50, 0.74, 0.88]))
+    final_decel = float(interp(v_ego, [0.0, 0.8, 1.8, 3.0], [0.18, 0.23, 0.32, 0.45]))
+    early_decel = max(early_decel, 0.22)
+    final_decel = max(final_decel, 0.18)
+    stop_gap_target = float(interp(v_ego, [0.0, 2.0, 6.0, 12.0], [3.8, 4.1, 5.8, 9.0]))
+    early_needed_distance = (v_ego * v_ego) / (2.0 * early_decel) + stop_gap_target
+    final_needed_distance = (v_ego * v_ego) / (2.0 * final_decel) + stop_gap_target
+    needed_distance = early_needed_distance
 
     current_decel = max(-original_accel, 0.25)
     current_stop_distance = (v_ego * v_ego) / (2.0 * current_decel) + stop_gap_target
     distance_to_stop = max(d_rel - stop_gap_target, 0.0) if lead_valid else 0.0
     distance_margin = d_rel - needed_distance if lead_valid else 0.0
-    target_accel = -soft_decel
+    final_distance_margin = d_rel - final_needed_distance if lead_valid else 0.0
+    phase = "none"
+    target_accel = -early_decel
 
-    approach_context = bool(stopping or (lead_valid and d_rel < 35.0 and v_rel < 0.15 and v_ego < 8.0))
+    approach_context = bool(stopping or (lead_valid and d_rel < 45.0 and v_rel < 0.25 and v_ego < 8.0))
+    early_window = bool(v_ego < 6.8 and distance_margin >= -0.8 and
+                        (stopping or original_accel < -0.35 or v_rel < -0.05))
+    final_window = bool(v_ego < 2.2 and final_distance_margin >= 0.0 and
+                        distance_to_stop <= max(5.0, (v_ego * 3.0) + 1.2))
     fallback_reason = "none"
     if not self.ford_stock_acc_soft_crawl_observe:
       fallback_reason = "observe_disabled"
@@ -513,18 +534,56 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
       fallback_reason = "not_approach_context"
     elif v_rel > 0.35 and not stopping:
       fallback_reason = "lead_pulling_away"
-    elif ttc < 2.2:
+    elif ttc < 2.0:
       fallback_reason = "short_ttc"
     elif lead_time < 0.7:
       fallback_reason = "short_lead_time"
-    elif distance_margin < 1.0:
+    elif not early_window and not final_window:
+      fallback_reason = "not_soft_crawl_window"
+
+    if fallback_reason == "none":
+      if final_window:
+        phase = "final_crawl"
+        target_accel = -final_decel
+        needed_distance = final_needed_distance
+        distance_margin = final_distance_margin
+        if distance_margin < 0.2:
+          fallback_reason = "insufficient_final_distance"
+      elif early_window:
+        phase = "early_soften"
+        target_accel = -early_decel
+        if distance_margin < -0.8:
+          fallback_reason = "insufficient_distance"
+      else:
+        fallback_reason = "not_soft_crawl_window"
+
+    if fallback_reason == "none" and target_accel <= original_accel + 0.03:
+      fallback_reason = "already_soft"
+
+    if fallback_reason == "none" and distance_margin < -0.8:
       fallback_reason = "insufficient_distance"
-    elif target_accel > original_accel + 0.75:
-      fallback_reason = "release_delta_too_large"
 
     available = fallback_reason == "none"
+    dt = now - self.ford_soft_crawl_prev_t if self.ford_soft_crawl_prev_t > 0.0 else DT_CTRL
+    dt = float(clip(dt, DT_CTRL, 0.2))
+    release_jerk = 0.65 if phase == "early_soften" else 0.45
+    start_accel = self.ford_soft_crawl_prev_accel if self.ford_soft_crawl_prev_t > 0.0 and available else original_accel
+    jerk_limited_accel = original_accel
     if available:
-      reason = "soft_crawl_available"
+      jerk_limited_accel = min(target_accel, start_accel + release_jerk * dt)
+      jerk_limited_accel = max(jerk_limited_accel, original_accel)
+
+    control_active = bool(self.ford_stock_acc_soft_crawl_control and self.ford_stock_acc_soft_crawl_v16 and
+                          phase == "early_soften" and available and jerk_limited_accel > original_accel + 0.01)
+    if available:
+      self.ford_soft_crawl_prev_t = now
+      self.ford_soft_crawl_prev_accel = jerk_limited_accel
+    else:
+      self.ford_soft_crawl_prev_t = 0.0
+      self.ford_soft_crawl_prev_accel = original_accel
+
+    if available:
+      reason = f"{phase}_available"
     elif fallback_reason in ("observe_disabled", "long_inactive", "human_override", "standstill"):
       reason = "not_evaluating"
     else:
@@ -533,7 +592,12 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
     self.ford_soft_crawl_last_available = bool(available)
     self.ford_soft_crawl_last_reason = reason
     self.ford_soft_crawl_last_fallback_reason = fallback_reason
+    self.ford_soft_crawl_last_phase = phase
     self.ford_soft_crawl_last_target_accel = float(target_accel)
+    self.ford_soft_crawl_last_raw_target_accel = float(target_accel)
+    self.ford_soft_crawl_last_jerk_limited_accel = float(jerk_limited_accel)
+    self.ford_soft_crawl_last_accel_after_control = float(jerk_limited_accel if control_active else original_accel)
+    self.ford_soft_crawl_last_stop_gap_target = float(stop_gap_target)
     self.ford_soft_crawl_last_distance_to_stop = float(distance_to_stop)
     self.ford_soft_crawl_last_needed_distance = float(needed_distance)
     self.ford_soft_crawl_last_distance_margin = float(distance_margin)
@@ -545,10 +609,9 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
     self.ford_soft_crawl_last_v_ego = float(v_ego)
     self.ford_soft_crawl_last_original_accel = float(original_accel)
     self.ford_soft_crawl_last_planner_stopping = bool(stopping)
-    # v1 is observe-only; keep this false until a later control version explicitly consumes it.
-    self.ford_soft_crawl_last_control_active = False
+    self.ford_soft_crawl_last_control_active = control_active
 
-    return available
+    return available, phase, jerk_limited_accel
 
   def _record_ford_stock_acc_v12(self, phase, reason, accel, gas, brake_actuate, precharge_actuate,
                                  stop_request, resume_enable, target_speed, original_accel, original_gas,
@@ -595,15 +658,27 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
     go_candidate, go_release_phase, go_accel = self._ford_stock_acc_go_release_v14(
       CC, CS, lead_data, lead_stable, lead_stability_age, gate_reason, standstill, human_override, stopping, now, accel
     )
-    self._ford_stock_acc_soft_crawl_observe_v1(
-      CC, CS, lead_data, lead_stable, lead_stability_age, cut_in, cut_out, stopping, original_accel
+    soft_crawl_available, soft_crawl_phase, soft_crawl_accel = self._ford_stock_acc_soft_crawl_observe_v1(
+      CC, CS, lead_data, lead_stable, lead_stability_age, cut_in, cut_out, stopping, original_accel, now
     )
+    if self.ford_soft_crawl_last_control_active:
+      accel = float(max(accel, soft_crawl_accel))
+      gas = CarControllerParams.INACTIVE_GAS
+      brake_actuate = accel < self.brake_actuate_target
+      precharge_actuate = accel < self.precharge_actuate_target
+      self.ford_soft_crawl_last_accel_after_control = float(accel)
     resume_age = 0.0
 
     phase = "pass_through"
     reason = "disabled"
     if not self.ford_stock_acc_stop_go_v12:
       self.ford_v12_resume_lead_move_t = 0.0
+      if self.ford_soft_crawl_last_control_active:
+        phase = soft_crawl_phase
+        reason = "soft_crawl_v16"
+      elif soft_crawl_available:
+        phase = soft_crawl_phase
+        reason = "soft_crawl_observe"
       self._record_ford_stock_acc_v12(phase, reason, accel, gas, brake_actuate, precharge_actuate,
                                       stop_request, resume_enable, target_speed, original_accel, original_gas,
                                       original_brake_actuate, original_precharge_actuate, lead_data, resume_age)

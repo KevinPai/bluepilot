@@ -317,7 +317,8 @@ class Car:
       cs_bp.stockGoReleasePhase = getattr(cc_obj, "ford_v14_last_release_phase", "")
       cs_bp.stockGoControlEnabled = bool(getattr(cc_obj, "ford_v14_last_control_enabled", False))
       cs_bp.softCrawlObserveEnabled = bool(getattr(cc_obj, "ford_stock_acc_soft_crawl_observe", False))
-      cs_bp.softCrawlControlEnabled = bool(getattr(cc_obj, "ford_stock_acc_soft_crawl_control", False))
+      cs_bp.softCrawlControlEnabled = bool(getattr(cc_obj, "ford_stock_acc_soft_crawl_control", False) and
+                                           getattr(cc_obj, "ford_stock_acc_soft_crawl_v16", False))
       cs_bp.softCrawlAvailable = bool(getattr(cc_obj, "ford_soft_crawl_last_available", False))
       cs_bp.softCrawlReason = getattr(cc_obj, "ford_soft_crawl_last_reason", "")
       cs_bp.softCrawlFallbackReason = getattr(cc_obj, "ford_soft_crawl_last_fallback_reason", "")
@@ -334,6 +335,12 @@ class Car:
       cs_bp.softCrawlOriginalAccel = float(getattr(cc_obj, "ford_soft_crawl_last_original_accel", 0.0))
       cs_bp.softCrawlPlannerStopping = bool(getattr(cc_obj, "ford_soft_crawl_last_planner_stopping", False))
       cs_bp.softCrawlControlActive = bool(getattr(cc_obj, "ford_soft_crawl_last_control_active", False))
+      cs_bp.softCrawlPhase = getattr(cc_obj, "ford_soft_crawl_last_phase", "")
+      cs_bp.softCrawlStopGapTarget = float(getattr(cc_obj, "ford_soft_crawl_last_stop_gap_target", 0.0))
+      cs_bp.softCrawlRawTargetAccel = float(getattr(cc_obj, "ford_soft_crawl_last_raw_target_accel", 0.0))
+      cs_bp.softCrawlJerkLimitedAccel = float(getattr(cc_obj, "ford_soft_crawl_last_jerk_limited_accel", 0.0))
+      cs_bp.softCrawlAccelAfterControl = float(getattr(cc_obj, "ford_soft_crawl_last_accel_after_control", 0.0))
+      cs_bp.softCrawlV16Enabled = bool(getattr(cc_obj, "ford_stock_acc_soft_crawl_v16", False))
       cs_bp_capnp = convert_to_capnp(cs_bp)
       cs_bp_send = messaging.new_message('controllerStateBP')
       cs_bp_send.valid = True
@@ -623,7 +630,8 @@ class Car:
         "stockGoReleasePhase": getattr(cc_obj, "ford_v14_last_release_phase", "unknown"),
         "stockGoControlEnabled": bool(getattr(cc_obj, "ford_v14_last_control_enabled", False)),
         "softCrawlObserveEnabled": bool(getattr(cc_obj, "ford_stock_acc_soft_crawl_observe", False)),
-        "softCrawlControlEnabled": bool(getattr(cc_obj, "ford_stock_acc_soft_crawl_control", False)),
+        "softCrawlControlEnabled": bool(getattr(cc_obj, "ford_stock_acc_soft_crawl_control", False) and
+                                        getattr(cc_obj, "ford_stock_acc_soft_crawl_v16", False)),
         "softCrawlAvailable": bool(getattr(cc_obj, "ford_soft_crawl_last_available", False)),
         "softCrawlReason": getattr(cc_obj, "ford_soft_crawl_last_reason", "unknown"),
         "softCrawlFallbackReason": getattr(cc_obj, "ford_soft_crawl_last_fallback_reason", "unknown"),
@@ -640,6 +648,12 @@ class Car:
         "softCrawlOriginalAccel": float(getattr(cc_obj, "ford_soft_crawl_last_original_accel", 0.0)),
         "softCrawlPlannerStopping": bool(getattr(cc_obj, "ford_soft_crawl_last_planner_stopping", False)),
         "softCrawlControlActive": bool(getattr(cc_obj, "ford_soft_crawl_last_control_active", False)),
+        "softCrawlPhase": getattr(cc_obj, "ford_soft_crawl_last_phase", "unknown"),
+        "softCrawlStopGapTarget": float(getattr(cc_obj, "ford_soft_crawl_last_stop_gap_target", 0.0)),
+        "softCrawlRawTargetAccel": float(getattr(cc_obj, "ford_soft_crawl_last_raw_target_accel", 0.0)),
+        "softCrawlJerkLimitedAccel": float(getattr(cc_obj, "ford_soft_crawl_last_jerk_limited_accel", 0.0)),
+        "softCrawlAccelAfterControl": float(getattr(cc_obj, "ford_soft_crawl_last_accel_after_control", 0.0)),
+        "softCrawlV16Enabled": bool(getattr(cc_obj, "ford_stock_acc_soft_crawl_v16", False)),
       },
       "radar": radar,
     }
