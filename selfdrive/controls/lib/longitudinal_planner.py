@@ -6,6 +6,7 @@ import cereal.messaging as messaging
 from opendbc.car.interfaces import ACCEL_MIN, ACCEL_MAX
 from openpilot.common.constants import CV
 from openpilot.common.filter_simple import FirstOrderFilter
+from openpilot.common.params import Params
 from openpilot.common.realtime import DT_MDL
 from openpilot.selfdrive.modeld.constants import ModelConstants
 from openpilot.selfdrive.controls.lib.longcontrol import LongCtrlState
@@ -22,6 +23,12 @@ A_CRUISE_MAX_BP = [0., 10.0, 25., 40.]
 CONTROL_N_T_IDX = ModelConstants.T_IDXS[:CONTROL_N]
 ALLOW_THROTTLE_THRESHOLD = 0.4
 MIN_ALLOW_THROTTLE_SPEED = 2.5
+FORD_LONGITUDINAL_GAP_TO_T_FOLLOW = {
+  1: 1.20,
+  2: 1.45,
+  3: 1.75,
+  4: 2.05,
+}
 
 # Lookup table for turns
 _A_TOTAL_MAX_V = [1.7, 3.2]
@@ -50,6 +57,7 @@ def limit_accel_in_turns(v_ego, angle_steers, a_target, CP):
 class LongitudinalPlanner(LongitudinalPlannerSP):
   def __init__(self, CP, CP_SP, init_v=0.0, init_a=0.0, dt=DT_MDL):
     self.CP = CP
+    self.params = Params()
     self.mpc = LongitudinalMpc(dt=dt)
     LongitudinalPlannerSP.__init__(self, self.CP, CP_SP, self.mpc)
     self.fcw = False
@@ -65,6 +73,19 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
     self.v_desired_trajectory = np.zeros(CONTROL_N)
     self.a_desired_trajectory = np.zeros(CONTROL_N)
     self.j_desired_trajectory = np.zeros(CONTROL_N)
+    self.frame = 0
+    self.ford_longitudinal_gap = 3
+
+  def get_ford_t_follow(self):
+    if self.CP.brand != "ford" or not self.CP.openpilotLongitudinalControl:
+      return None
+
+    if self.frame % int(1.0 / self.dt) == 0:
+      try:
+        self.ford_longitudinal_gap = min(max(int(self.params.get("FordLongitudinalGap", return_default=True)), 1), 4)
+      except (TypeError, ValueError):
+        self.ford_longitudinal_gap = 3
+    return FORD_LONGITUDINAL_GAP_TO_T_FOLLOW[self.ford_longitudinal_gap]
 
   @staticmethod
   def parse_model(model_msg):
@@ -87,6 +108,7 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
     return x, v, a, j, throttle_prob
 
   def update(self, sm):
+    self.frame += 1
     LongitudinalPlannerSP.update(self, sm)
 
     if len(sm['carControl'].orientationNED) == 3:
@@ -138,7 +160,7 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
 
     self.mpc.set_weights(prev_accel_constraint, personality=sm['selfdriveState'].personality)
     self.mpc.set_cur_state(self.v_desired_filter.x, self.a_desired)
-    self.mpc.update(sm['radarState'], v_cruise, personality=sm['selfdriveState'].personality)
+    self.mpc.update(sm['radarState'], v_cruise, personality=sm['selfdriveState'].personality, t_follow=self.get_ford_t_follow())
 
     self.v_desired_trajectory = np.interp(CONTROL_N_T_IDX, T_IDXS_MPC, self.mpc.v_solution)
     self.a_desired_trajectory = np.interp(CONTROL_N_T_IDX, T_IDXS_MPC, self.mpc.a_solution)

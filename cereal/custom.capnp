@@ -501,6 +501,14 @@ struct ControllerStateBP @0xcd96dafb67a082d0 {
   softCrawlJerkLimitedAccel @33 :Float32;
   softCrawlAccelAfterControl @34 :Float32;
   softCrawlV16Enabled @35 :Bool;
+  softCrawlControlStage @36 :Text;
+  softCrawlTimeToStopEst @37 :Float32;
+  softCrawlMainControlDistance @38 :Float32;
+  softCrawlCloseControlDistance @39 :Float32;
+  softCrawlMainControlAllowed @40 :Bool;
+  softCrawlV17Enabled @41 :Bool;
+  softCrawlV171Enabled @42 :Bool;
+  softCrawlV172Enabled @43 :Bool;
 }
 
 struct CarStateBP @0xb057204d7deadf3f {

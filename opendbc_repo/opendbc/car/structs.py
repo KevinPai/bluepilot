@@ -211,3 +211,11 @@ class ControllerStateBP:
   softCrawlJerkLimitedAccel: float = 0.0
   softCrawlAccelAfterControl: float = 0.0
   softCrawlV16Enabled: bool = False
+  softCrawlControlStage: str = ""
+  softCrawlTimeToStopEst: float = 0.0
+  softCrawlMainControlDistance: float = 0.0
+  softCrawlCloseControlDistance: float = 0.0
+  softCrawlMainControlAllowed: bool = False
+  softCrawlV17Enabled: bool = False
+  softCrawlV171Enabled: bool = False
+  softCrawlV172Enabled: bool = False

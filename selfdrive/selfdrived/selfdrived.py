@@ -36,6 +36,8 @@ SIMULATION = "SIMULATION" in os.environ
 TESTING_CLOSET = "TESTING_CLOSET" in os.environ
 
 LONGITUDINAL_PERSONALITY_MAP = {v: k for k, v in log.LongitudinalPersonality.schema.enumerants.items()}
+FORD_LONGITUDINAL_GAP_MIN = 1
+FORD_LONGITUDINAL_GAP_MAX = 4
 
 ThermalStatus = log.DeviceState.ThermalStatus
 State = log.SelfdriveState.OpenpilotState
@@ -137,6 +139,12 @@ class SelfdriveD(CruiseHelper):
       "LongitudinalPersonality",
       min(log.LongitudinalPersonality.schema.enumerants.values()),
       max(log.LongitudinalPersonality.schema.enumerants.values()),
+      self.params
+    )
+    self.ford_longitudinal_gap = get_sanitize_int_param(
+      "FordLongitudinalGap",
+      FORD_LONGITUDINAL_GAP_MIN,
+      FORD_LONGITUDINAL_GAP_MAX,
       self.params
     )
     self.recalibrating_seen = False
@@ -446,13 +454,17 @@ class SelfdriveD(CruiseHelper):
 
     CruiseHelper.update(self, CS, self.events_sp, self.experimental_mode)
 
-    # decrement personality on distance button press
+    # Ford keeps a native 4-bar gap separate from openpilot's 3 driving personalities.
     if self.CP.openpilotLongitudinalControl:
       if any(not be.pressed and be.type == ButtonType.gapAdjustCruise for be in CS.buttonEvents):
         if not self.experimental_mode_switched:
-          self.personality = (self.personality - 1) % 3
-          self.params.put_nonblocking('LongitudinalPersonality', self.personality)
-          self.events.add(EventName.personalityChanged)
+          if self.CP.brand == "ford":
+            self.ford_longitudinal_gap = (self.ford_longitudinal_gap % FORD_LONGITUDINAL_GAP_MAX) + FORD_LONGITUDINAL_GAP_MIN
+            self.params.put_nonblocking('FordLongitudinalGap', self.ford_longitudinal_gap)
+          else:
+            self.personality = (self.personality - 1) % 3
+            self.params.put_nonblocking('LongitudinalPersonality', self.personality)
+            self.events.add(EventName.personalityChanged)
         self.experimental_mode_switched = False
 
     self.icbm.run(CS, self.sm['carControl'], self.sm['longitudinalPlanSP'], self.is_metric)
@@ -596,6 +608,13 @@ class SelfdriveD(CruiseHelper):
       self.disengage_on_accelerator = self.params.get_bool("DisengageOnAccelerator")
       self.experimental_mode = self.params.get_bool("ExperimentalMode") and self.CP.openpilotLongitudinalControl
       self.personality = self.params.get("LongitudinalPersonality", return_default=True)
+      if self.CP.brand == "ford":
+        self.ford_longitudinal_gap = get_sanitize_int_param(
+          "FordLongitudinalGap",
+          FORD_LONGITUDINAL_GAP_MIN,
+          FORD_LONGITUDINAL_GAP_MAX,
+          self.params
+        )
 
       self.mads.read_params()
       time.sleep(0.1)

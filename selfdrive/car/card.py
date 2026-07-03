@@ -90,6 +90,7 @@ class Car:
     self.ford_observe_source_key = None
     self.ford_observe_source_transition_t = 0.0
     self.ford_observe_resume_lead_move_t = 0.0
+    self.controller_state_bp_last_send_t = 0.0
 
     self.params = Params()
 
@@ -302,8 +303,17 @@ class Car:
       self.log_ford_long_observe(CS, CC)
 
     if hasattr(self.CI.CC, "lateralUncertainty"):
-      cs_bp = structs.ControllerStateBP()
       cc_obj = self.CI.CC
+      controller_state_bp_now = time.monotonic()
+      low_speed_debug = bool(CC.longActive and (CS.vEgo < 8.0 or CS.standstill or CS.gasPressed or CS.brakePressed))
+      soft_crawl_debug = bool(getattr(cc_obj, "ford_soft_crawl_last_available", False) or
+                              getattr(cc_obj, "ford_soft_crawl_last_control_active", False))
+      controller_state_bp_interval = 0.5 if (low_speed_debug or soft_crawl_debug) else 2.0
+      if controller_state_bp_now - self.controller_state_bp_last_send_t < controller_state_bp_interval:
+        return
+      self.controller_state_bp_last_send_t = controller_state_bp_now
+
+      cs_bp = structs.ControllerStateBP()
       cs_bp.lateralUncertainty = cc_obj.lateralUncertainty
       cs_bp.stockGoLeadMoved = bool(getattr(cc_obj, "ford_v14_last_lead_moved", False))
       cs_bp.stockGoLeadStable = bool(getattr(cc_obj, "ford_v14_last_lead_stable", False))
@@ -318,7 +328,9 @@ class Car:
       cs_bp.stockGoControlEnabled = bool(getattr(cc_obj, "ford_v14_last_control_enabled", False))
       cs_bp.softCrawlObserveEnabled = bool(getattr(cc_obj, "ford_stock_acc_soft_crawl_observe", False))
       cs_bp.softCrawlControlEnabled = bool(getattr(cc_obj, "ford_stock_acc_soft_crawl_control", False) and
-                                           getattr(cc_obj, "ford_stock_acc_soft_crawl_v16", False))
+                                           (getattr(cc_obj, "ford_stock_acc_soft_crawl_v16", False) or
+                                            getattr(cc_obj, "ford_stock_acc_soft_crawl_v17", False) or
+                                            getattr(cc_obj, "ford_stock_acc_soft_crawl_v171", False)))
       cs_bp.softCrawlAvailable = bool(getattr(cc_obj, "ford_soft_crawl_last_available", False))
       cs_bp.softCrawlReason = getattr(cc_obj, "ford_soft_crawl_last_reason", "")
       cs_bp.softCrawlFallbackReason = getattr(cc_obj, "ford_soft_crawl_last_fallback_reason", "")
@@ -340,7 +352,18 @@ class Car:
       cs_bp.softCrawlRawTargetAccel = float(getattr(cc_obj, "ford_soft_crawl_last_raw_target_accel", 0.0))
       cs_bp.softCrawlJerkLimitedAccel = float(getattr(cc_obj, "ford_soft_crawl_last_jerk_limited_accel", 0.0))
       cs_bp.softCrawlAccelAfterControl = float(getattr(cc_obj, "ford_soft_crawl_last_accel_after_control", 0.0))
-      cs_bp.softCrawlV16Enabled = bool(getattr(cc_obj, "ford_stock_acc_soft_crawl_v16", False))
+      cs_bp.softCrawlV16Enabled = bool(getattr(cc_obj, "ford_stock_acc_soft_crawl_v16", False) or
+                                       getattr(cc_obj, "ford_stock_acc_soft_crawl_v17", False) or
+                                       getattr(cc_obj, "ford_stock_acc_soft_crawl_v171", False) or
+                                       getattr(cc_obj, "ford_stock_acc_soft_crawl_v172", False))
+      cs_bp.softCrawlControlStage = getattr(cc_obj, "ford_soft_crawl_last_control_stage", "")
+      cs_bp.softCrawlTimeToStopEst = float(getattr(cc_obj, "ford_soft_crawl_last_time_to_stop_est", 0.0))
+      cs_bp.softCrawlMainControlDistance = float(getattr(cc_obj, "ford_soft_crawl_last_main_control_distance", 0.0))
+      cs_bp.softCrawlCloseControlDistance = float(getattr(cc_obj, "ford_soft_crawl_last_close_control_distance", 0.0))
+      cs_bp.softCrawlMainControlAllowed = bool(getattr(cc_obj, "ford_soft_crawl_last_main_control_allowed", False))
+      cs_bp.softCrawlV17Enabled = bool(getattr(cc_obj, "ford_stock_acc_soft_crawl_v17", False))
+      cs_bp.softCrawlV171Enabled = bool(getattr(cc_obj, "ford_stock_acc_soft_crawl_v171", False))
+      cs_bp.softCrawlV172Enabled = bool(getattr(cc_obj, "ford_stock_acc_soft_crawl_v172", False))
       cs_bp_capnp = convert_to_capnp(cs_bp)
       cs_bp_send = messaging.new_message('controllerStateBP')
       cs_bp_send.valid = True
@@ -352,9 +375,6 @@ class Car:
       return
 
     now = time.monotonic()
-    if now - self.ford_observe_last_log_t < 0.5:
-      return
-
     lead = None
     if self.sm.valid.get('radarState', False):
       lead = getattr(self.sm['radarState'], 'leadOne', None)
@@ -364,6 +384,10 @@ class Car:
     low_speed = CS.vEgo < 22.0
     should_log = low_speed or CC.longActive or CS.gasPressed or CS.brakePressed or lead is not None
     if not should_log:
+      return
+    stop_go_debug = bool(CC.longActive and (CS.vEgo < 8.0 or CS.standstill or CS.gasPressed or CS.brakePressed))
+    log_interval = 1.0 if stop_go_debug else 5.0
+    if now - self.ford_observe_last_log_t < log_interval:
       return
 
     self.ford_observe_last_log_t = now
@@ -541,6 +565,7 @@ class Car:
     payload = {
       "tag": "FORD_LONG_OBS_V3",
       "opLong": bool(self.CP.openpilotLongitudinalControl),
+      "fordLongitudinalGap": self.params.get("FordLongitudinalGap", return_default=True),
       "longActive": bool(CC.longActive),
       "longState": long_state,
       "vEgo": float(CS.vEgo),
@@ -631,7 +656,9 @@ class Car:
         "stockGoControlEnabled": bool(getattr(cc_obj, "ford_v14_last_control_enabled", False)),
         "softCrawlObserveEnabled": bool(getattr(cc_obj, "ford_stock_acc_soft_crawl_observe", False)),
         "softCrawlControlEnabled": bool(getattr(cc_obj, "ford_stock_acc_soft_crawl_control", False) and
-                                        getattr(cc_obj, "ford_stock_acc_soft_crawl_v16", False)),
+                                        (getattr(cc_obj, "ford_stock_acc_soft_crawl_v16", False) or
+                                         getattr(cc_obj, "ford_stock_acc_soft_crawl_v17", False) or
+                                         getattr(cc_obj, "ford_stock_acc_soft_crawl_v171", False))),
         "softCrawlAvailable": bool(getattr(cc_obj, "ford_soft_crawl_last_available", False)),
         "softCrawlReason": getattr(cc_obj, "ford_soft_crawl_last_reason", "unknown"),
         "softCrawlFallbackReason": getattr(cc_obj, "ford_soft_crawl_last_fallback_reason", "unknown"),
@@ -649,11 +676,22 @@ class Car:
         "softCrawlPlannerStopping": bool(getattr(cc_obj, "ford_soft_crawl_last_planner_stopping", False)),
         "softCrawlControlActive": bool(getattr(cc_obj, "ford_soft_crawl_last_control_active", False)),
         "softCrawlPhase": getattr(cc_obj, "ford_soft_crawl_last_phase", "unknown"),
+        "softCrawlControlStage": getattr(cc_obj, "ford_soft_crawl_last_control_stage", "unknown"),
+        "softCrawlTimeToStopEst": float(getattr(cc_obj, "ford_soft_crawl_last_time_to_stop_est", 0.0)),
+        "softCrawlMainControlDistance": float(getattr(cc_obj, "ford_soft_crawl_last_main_control_distance", 0.0)),
+        "softCrawlCloseControlDistance": float(getattr(cc_obj, "ford_soft_crawl_last_close_control_distance", 0.0)),
+        "softCrawlMainControlAllowed": bool(getattr(cc_obj, "ford_soft_crawl_last_main_control_allowed", False)),
         "softCrawlStopGapTarget": float(getattr(cc_obj, "ford_soft_crawl_last_stop_gap_target", 0.0)),
         "softCrawlRawTargetAccel": float(getattr(cc_obj, "ford_soft_crawl_last_raw_target_accel", 0.0)),
         "softCrawlJerkLimitedAccel": float(getattr(cc_obj, "ford_soft_crawl_last_jerk_limited_accel", 0.0)),
         "softCrawlAccelAfterControl": float(getattr(cc_obj, "ford_soft_crawl_last_accel_after_control", 0.0)),
-        "softCrawlV16Enabled": bool(getattr(cc_obj, "ford_stock_acc_soft_crawl_v16", False)),
+        "softCrawlV16Enabled": bool(getattr(cc_obj, "ford_stock_acc_soft_crawl_v16", False) or
+                                    getattr(cc_obj, "ford_stock_acc_soft_crawl_v17", False) or
+                                    getattr(cc_obj, "ford_stock_acc_soft_crawl_v171", False) or
+                                    getattr(cc_obj, "ford_stock_acc_soft_crawl_v172", False)),
+        "softCrawlV17Enabled": bool(getattr(cc_obj, "ford_stock_acc_soft_crawl_v17", False)),
+        "softCrawlV171Enabled": bool(getattr(cc_obj, "ford_stock_acc_soft_crawl_v171", False)),
+        "softCrawlV172Enabled": bool(getattr(cc_obj, "ford_stock_acc_soft_crawl_v172", False)),
       },
       "radar": radar,
     }

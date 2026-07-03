@@ -27,6 +27,15 @@ LaneChangeState = log.LaneChangeState
 LaneChangeDirection = log.LaneChangeDirection
 
 ACTUATOR_FIELDS = tuple(car.CarControl.Actuators.schema.fields.keys())
+FORD_LONGITUDINAL_GAP_MIN = 1
+FORD_LONGITUDINAL_GAP_MAX = 4
+
+
+def read_ford_longitudinal_gap(params: Params) -> int:
+  try:
+    return min(max(int(params.get("FordLongitudinalGap", return_default=True)), FORD_LONGITUDINAL_GAP_MIN), FORD_LONGITUDINAL_GAP_MAX)
+  except (TypeError, ValueError):
+    return 3
 
 
 class Controls(ControlsExt):
@@ -35,6 +44,7 @@ class Controls(ControlsExt):
     cloudlog.info("controlsd is waiting for CarParams")
     self.CP = messaging.log_from_bytes(self.params.get("CarParams", block=True), car.CarParams)
     cloudlog.info("controlsd got CarParams")
+    self.ford_longitudinal_gap = read_ford_longitudinal_gap(self.params)
 
     # Initialize sunnypilot controlsd extension and base model state
     ControlsExt.__init__(self, self.CP, self.params)
@@ -176,7 +186,12 @@ class Controls(ControlsExt):
     hudControl.speedVisible = CC.enabled
     hudControl.lanesVisible = CC.enabled
     hudControl.leadVisible = self.sm['longitudinalPlan'].hasLead
-    hudControl.leadDistanceBars = self.sm['selfdriveState'].personality.raw + 1
+    if self.CP.brand == "ford" and self.CP.openpilotLongitudinalControl:
+      if self.sm.frame % int(0.5 / DT_CTRL) == 0:
+        self.ford_longitudinal_gap = read_ford_longitudinal_gap(self.params)
+      hudControl.leadDistanceBars = self.ford_longitudinal_gap
+    else:
+      hudControl.leadDistanceBars = self.sm['selfdriveState'].personality.raw + 1
     hudControl.visualAlert = self.sm['selfdriveState'].alertHudVisual
 
     hudControl.rightLaneVisible = True

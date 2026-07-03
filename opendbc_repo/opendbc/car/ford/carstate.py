@@ -191,12 +191,14 @@ class CarState(CarStateBase, MadsCarState, CarStateExt):
 
   def log_ford_stock_acc_observe(self, cp, cp_cam, ret):
     now = time.monotonic()
-    if now - self.ford_stock_acc_observe_last_log_t < 1.0:
-      return
 
     low_speed = ret.vEgo < 22.0
     should_log = low_speed or ret.cruiseState.enabled or ret.cruiseState.available or ret.gasPressed or ret.brakePressed
     if not should_log:
+      return
+    stop_go_debug = low_speed and (ret.cruiseState.enabled or ret.cruiseState.standstill or ret.gasPressed or ret.brakePressed)
+    log_interval = 2.0 if stop_go_debug else 5.0
+    if now - self.ford_stock_acc_observe_last_log_t < log_interval:
       return
 
     self.ford_stock_acc_observe_last_log_t = now
